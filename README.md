@@ -2,7 +2,9 @@
 A thermostat app that works in a wall-mounted Photon, responds to Blynk web commands, has a built-in 
 programmable schedule, and displays status on Blynk.  It heats only and easily modifiable to cool as
 well will have to figure out how to integrate as a system with the hardware cooling.  Suggestions 
-to keep the installation safe are provided.
+to keep the installation safe are provided.    There is an embedded heating system model to allow you 
+to test code changes on a bare Photon using the web interface, including the Blynk interface.   This
+bare option lights the blue LED on a call for heat.
 
 
 README.txt   File for Thermostat gitHub project
