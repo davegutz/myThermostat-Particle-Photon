@@ -1,0 +1,15 @@
+{
+  "event": "get_weather_intl",
+  "url": "http://api.openweathermap.org/data/2.5/weather",
+  "requestType":"GET",
+  "headers": null,
+  "query": {
+  	"q": "id",
+  	"p": 4954801
+  }
+  "json":null,
+  "units": "Imperial",
+  "auth": 796fb85518f8b9eac4ad983306b3246c
+  "responseTemplate": "{{main.temp}}~{{main.pressure}}",
+  "mydevices": true
+}
