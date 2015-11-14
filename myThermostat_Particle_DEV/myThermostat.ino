@@ -78,15 +78,17 @@
 //                 blynk app account, Particle account
 //
 //#pragma SPARK_NO_PREPROCESSOR
+#include "application.h"
 #include "openweathermap.h"
 #include "HttpClient.h"
-#include "application.h"
-#include "adafruit-led-backpack.h"
 #include "SparkIntervalTimer.h"
 #include "SparkTime.h"
 #include "blynk.h"
 #include "BlynkHandlers.h"
 #include <math.h>
+#include "adafruit-led-backpack.h"
+#include "pixmaps.h"
+
 #define HAVEI2C 1
 //#undef  HAVEI2C                             // Test feature to test code on simple Photon
 #define controlDelay    1000                // Control law wait, ms
@@ -173,12 +175,14 @@ void OnTimerDim(void)
     if (!call)
     {
         matrix1.setCursor(1, 0);
-        matrix1.write('.');
+        //matrix1.write('.');
+        matrix1.drawBitmap(0, 0, randomDot(), 8, 8, LED_ON);
     }
     else
     {
         matrix2.setCursor(1, 0);
-        matrix2.write('+');
+        //matrix2.write('+');
+        matrix2.drawBitmap(0, 0, randomPlus(), 8, 8, LED_ON);
     }
     matrix1.setBrightness(1);  // 1-15
     matrix2.setBrightness(1);  // 1-15
@@ -195,22 +199,9 @@ void displayTemperature(void)
 #ifdef HAVEI2C
     char ones = abs(set) % 10;
     char tens =(abs(set) / 10) % 10;
-    /*
-    uint8_t smile[] = {
-        0b00111100,
-        0b01000010,
-        0b10100101,
-        0b10000001,
-        0b10100101,
-        0b10011001,
-        0b01000010,
-        0b00111100
-    };
-    */
     matrix1.clear();
     matrix1.setCursor(0, 0);
     matrix1.write(tens + '0');
-    //matrix1.drawBitmap(0, 0, smile, 8, 8, LED_ON);
     matrix1.setBrightness(1);  // 1-15
     matrix1.blinkRate(0);      // 0-3
     matrix1.writeDisplay();
@@ -225,7 +216,7 @@ void displayTemperature(void)
     myTimer.resetPeriod_SIT(displayTime, hmSec);
 }
 
-// Simple house model for testing logic
+// Simple embedded house model for testing logic
 double modelTemperature(bool call, double OAT, double T)
 {
     static const    double Chouse     = 1000;   // House thermal mass, BTU/F
