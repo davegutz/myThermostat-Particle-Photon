@@ -42,7 +42,11 @@ uint8_t* randomDot(void)
 {
     static uint8_t dotmat[8];
     for (int i=0; i<8; i++) dotmat[i] = dotmatzero[i];
+<<<<<<< HEAD
     int irand = random(4)*2;
+=======
+    int irand = random(4);
+>>>>>>> origin/master
     int jrand = random(4);
     for (int i=irand; i<irand+2; i++) dotmat[i] = dots[jrand];
     return dotmat;
