@@ -89,11 +89,11 @@
 #include "adafruit-led-backpack.h"
 #include "pixmaps.h"
 
-#define HAVEI2C 1
-//#undef  HAVEI2C                             // Test feature to test code on simple Photon
-#define controlDelay    1000                // Control law wait, ms
-#define publishDelay    20000               // Time between cloud updates, ms
-#define readDelay       5000                // Sensor read wait, ms
+//#define HAVEI2C 1
+#undef  HAVEI2C                             // Test feature to test code on simple Photon
+#define controlDelay    1000UL              // Control law wait, ms
+#define publishDelay    20000UL             // Time between cloud updates, ms
+#define readDelay       5000UL              // Sensor read wait, ms
 #undef  FAKETIME                            // For simulating rapid time passing
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon
 #define HYST    0.5                         // Heat control law hysteresis, F
@@ -105,12 +105,17 @@
 #define NCH     4                           // Number of temp changes in daily sched
 using namespace std;
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
+#include "myAuth.h"
+/* This file myAutho.h is not in Git repository because it contains personal information.
+Make it yourself.   It should look like this:
 #ifdef HAVEI2C
-    const   char        blynkAuth[]     = "see email 'Keys for Thermostat Code'"; // PhotonTHermo9HYK thermostat
+    const   char        blynkAuth[]     = "4f1de4949e4c4020882efd3e61XXX6cd"; // Photon thermostat
 #else
-    const   char        blynkAuth[]     = "see email 'Keys for Thermostat Code'"; // PhotonExp9HYK unconnected photon
+    const   char        blynkAuth[]     = "d2140898f7b94373a78XXX158a3403a1"; // Bare photon
 #endif
-const   char        weathAuth[]     = "see email 'Keys for Thermostat Code'"; // see http://openweathermap.org/appid
+const   char        weathAuth[]     = "796fb85518f8b9eac4ad983XXXb3246c";       // Get OAT
+*/
+
 bool                call            = false;// Heat demand to relay control
 double              callf;                  // Floating point of bool call for calculation
 Mode                controlMode     = POT;  // Present control mode
@@ -137,7 +142,7 @@ double              temp            = 65.0; // Sensed temp, F
 double              Thouse;                 // House bulk temp, F
 UDP                 UDPClient;              // Time structure
 double              updateTime;             // Control law update time, sec
-static const int    verbose         = 2;    // Debug, as much as you can tolerate
+static const int    verbose         = 4;    // Debug, as much as you can tolerate
 Weather*            weather;                // To get OAT from openweathermap
 uint8_t             webDmd          = 62;   // Web sched, F
 bool                webHold         = false;// Web permanence request
@@ -381,6 +386,8 @@ BLYNK_WRITE(V6) {
 // Setup
 void setup()
 {
+    Serial.begin(9600);
+    delay(1000); // Allow board to settle
     pinMode(LED, OUTPUT);               // sets pin as output
     Particle.variable("call",       &call,                  BOOLEAN);
     Particle.variable("temp",       &temp,                  DOUBLE);
@@ -413,6 +420,7 @@ void setup()
     {
         if (hourCh[day][num] >= hourCh[day][num+1]) hourChErr = true;
     }
+    if (verbose>3) Serial.printf("After hourCh in setup()\n");
 
     // OAT
     httpClient  = new HttpClient();
@@ -420,26 +428,25 @@ void setup()
     weather->setFahrenheit();
 
     // Begin
-    Serial.begin(9600);
-    delay(1000); // Allow board to settle
     Blynk.begin(blynkAuth);
+    if (verbose>1) Serial.printf("End setup()\n");
 }
 
 // Loop
 void loop()
 {
-    unsigned long       currentTime;        // Time result
-    unsigned long       now = millis();     // Keep track of time
-    char*               hmstr = new char[8];// time, hh:mm
-    static double       hour        = 0.0;  // Decimal time, hour
-    int                 potDmd      = 0;    // Pot value, deg F
-    bool                control;            // Control sequence, T/F
-    bool                publish;            // Publish, T/F
-    bool                read;               // Read, T/F
-    static double       lastHour    = 0.0;  // Past used time value,  hours
-    static unsigned int lastControl = 0;    // Last control law time, ms
-    static unsigned int lastPublish = 0;    // Last publish time, ms
-    static unsigned int lastRead    = 0;    // Last read time, ms
+    unsigned long           currentTime;        // Time result
+    unsigned long           now = millis();     // Keep track of time
+    char*                   hmstr = new char[8];// time, hh:mm
+    static double           hour        = 0.0;  // Decimal time, hour
+    int                     potDmd      = 0;    // Pot value, deg F
+    bool                    control;            // Control sequence, T/F
+    bool                    publish;            // Publish, T/F
+    bool                    read;               // Read, T/F
+    static double           lastHour    = 0.0;  // Past used time value,  hours
+    static unsigned long    lastControl = 0UL;  // Last control law time, ms
+    static unsigned long    lastPublish = 0UL;  // Last publish time, ms
+    static unsigned long    lastRead    = 0UL;  // Last read time, ms
 
     // Sequencing
     Blynk.run();
