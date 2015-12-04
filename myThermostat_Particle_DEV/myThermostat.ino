@@ -89,13 +89,8 @@
 #include "adafruit-led-backpack.h"
 #include "pixmaps.h"
 
-<<<<<<< HEAD
 #define HAVEI2C 1
 //#undef  HAVEI2C                             // Test feature to test code on simple Photon
-=======
-//#define HAVEI2C 1
-#undef  HAVEI2C                             // Test feature to test code on simple Photon
->>>>>>> origin/master
 #define controlDelay    1000UL              // Control law wait, ms
 #define publishDelay    20000UL             // Time between cloud updates, ms
 #define readDelay       5000UL              // Sensor read wait, ms
@@ -112,12 +107,8 @@ using namespace std;
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 #include "myAuth.h"
 /* This file myAutho.h is not in Git repository because it contains personal information.
-<<<<<<< HEAD
 Make it yourself.   It should look like this, with your personal authorizations:
 (Note:  you don't need a valid number for one of the blynkAuth if not using it.)
-=======
-Make it yourself.   It should look like this:
->>>>>>> origin/master
 #ifdef HAVEI2C
     const   char        blynkAuth[]     = "4f1de4949e4c4020882efd3e61XXX6cd"; // Photon thermostat
 #else
