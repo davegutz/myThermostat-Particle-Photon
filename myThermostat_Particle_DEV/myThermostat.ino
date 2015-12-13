@@ -79,6 +79,7 @@
 //
 //#pragma SPARK_NO_PREPROCESSOR
 #include "application.h"
+SYSTEM_THREAD(ENABLED);      // Make sure heat system code always run regardless of network status
 #include "openweathermap.h"
 #include "HttpClient.h"
 #include "SparkIntervalTimer.h"
@@ -88,9 +89,21 @@
 #include <math.h>
 #include "adafruit-led-backpack.h"
 #include "pixmaps.h"
-
 #define HAVEI2C 1
 //#undef  HAVEI2C                             // Test feature to test code on simple Photon
+#include "myAuth.h"
+/* This file myAutho.h is not in Git repository because it contains personal information.
+Make it yourself.   It should look like this, with your personal authorizations:
+(Note:  you don't need a valid number for one of the blynkAuth if not using it.)
+#ifdef HAVEI2C
+    const   char        blynkAuth[]     = "4f1de4949e4c4020882efd3e61XXX6cd"; // Photon thermostat
+#else
+    const   char        blynkAuth[]     = "d2140898f7b94373a78XXX158a3403a1"; // Bare photon
+#endif
+const   char        weathAuth[]     = "796fb85518f8b9eac4ad983XXXb3246c";       // Get OAT
+const 	int			   location 		        = 1111111;  // id number  List of city ID city.list.json.gz can be downloaded here http://bulk.openweathermap.org/sample/
+*/
+
 #define controlDelay    1000UL              // Control law wait, ms
 #define publishDelay    20000UL             // Time between cloud updates, ms
 #define readDelay       5000UL              // Sensor read wait, ms
@@ -103,49 +116,46 @@
 #define MINSET  50                          // Minimum setpoint allowed, F
 #define MAXSET  72                          // Maximum setpoint allowed, F
 #define NCH     4                           // Number of temp changes in daily sched
+#define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
 using namespace std;
-enum                Mode {POT, WEB, SCHD};  // To keep track of mode
-#include "myAuth.h"
-/* This file myAutho.h is not in Git repository because it contains personal information.
-Make it yourself.   It should look like this, with your personal authorizations:
-(Note:  you don't need a valid number for one of the blynkAuth if not using it.)
-#ifdef HAVEI2C
-    const   char        blynkAuth[]     = "4f1de4949e4c4020882efd3e61XXX6cd"; // Photon thermostat
-#else
-    const   char        blynkAuth[]     = "d2140898f7b94373a78XXX158a3403a1"; // Bare photon
-#endif
-const   char        weathAuth[]     = "796fb85518f8b9eac4ad983XXXb3246c";       // Get OAT
-*/
 
+enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callf;                  // Floating point of bool call for calculation
+int                 connectTime     = 590000;// Avoid time particle connection timeout
 Mode                controlMode     = POT;  // Present control mode
 int                 displayTime     = 10000;// Elapsed time display LED
 const   int         EEPROM_ADDR     = 10;   // Flash address
 bool                held            = false;// Web toggled permanent and acknowledged
+char*               hmstr   = new char[8];  // time, hh:mm
+static double       hour            = 0.0;  // Decimal time, hour
 int                 hum             = 0;    // Relative humidity integer value, %
 HttpClient*         httpClient;             // To get OAT from openweathermap
 int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
+unsigned long       lastSync     = millis();// Sync time occassionally
 const   int         LED             = D7;   // Status LED
-const 	int			location 		= 4954801;  // id number  List of city ID city.list.json.gz can be downloaded here http://bulk.openweathermap.org/sample/
 Adafruit_8x8matrix  matrix1;                // Tens LED matrix
 Adafruit_8x8matrix  matrix2;                // Ones LED matrix
-IntervalTimer       myTimer;                // To dim display
+IntervalTimer       myTimerD;               // To dim display
+IntervalTimer       myTimerC;               // To connect
 IntervalTimer       myTimer7;               // To blink LED
+int                 numTimeouts     = 0;    // Number of Particle.connect() needed to unfreeze
 double              OAT             = 30;   // Outside air temperature, F
+int                 potDmd          = 0;    // Pot value, deg F
 int                 potValue        = 62;   // Dial raw value, F
 bool                reco;                   // Indicator of recovering on cold days by shifting schedule
 SparkTime           rtc;                    // Time value
 int                 schdDmd         = 62;   // Sched raw value, F
 int                 set             = 62;   // Selected sched, F
-double              temp            = 65.0; // Sensed temp, F
+char*               ststr   = new char[80]; // Status string
+double              temp          = 65.0;   // Sensed temp, F
 double              Thouse;                 // House bulk temp, F
 UDP                 UDPClient;              // Time structure
 double              updateTime;             // Control law update time, sec
-static const int    verbose         = 4;    // Debug, as much as you can tolerate
+static const int    verbose         = 5;    // Debug, as much as you can tolerate
 Weather*            weather;                // To get OAT from openweathermap
-uint8_t             webDmd          = 62;   // Web sched, F
+int                 webDmd          = 62;   // Web sched, F
 bool                webHold         = false;// Web permanence request
 
 // Schedules
@@ -171,6 +181,17 @@ static const float tempCh[7][NCH] = {
     68, 62, 68, 62, // Fri
     68, 62, 68, 62  // Sat
 };
+
+// Handler for the Particle connection, called automatically
+void connect()
+{
+  if (Particle.connected() == false)
+  {
+    Particle.connect();
+    numTimeouts++;
+  }
+  myTimerC.resetPeriod_SIT(connectTime, hmSec);
+}
 
 // Handler for the display dimmer timer, called automatically
 void OnTimerDim(void)
@@ -219,7 +240,7 @@ void displayTemperature(void)
     matrix2.writeDisplay();
 #endif
     // Reset clock
-    myTimer.resetPeriod_SIT(displayTime, hmSec);
+    myTimerD.resetPeriod_SIT(displayTime, hmSec);
 }
 
 // Simple embedded house model for testing logic
@@ -249,7 +270,7 @@ void saveTemperature()
 // new Photon unit and we'll need some safe (furnace off) default values.
 void loadTemperature()
 {
-    Serial.println("Loading and displaying temperature from flash");
+    if (verbose>0) Serial.println("Loading and displaying temperature from flash");
     uint8_t values[4];
     EEPROM.get(EEPROM_ADDR, values);
     //
@@ -260,7 +281,7 @@ void loadTemperature()
     webHold = values[1];
     if ( (webHold >  1) | (webHold <  0) ) webHold =  0;
     //
-    webDmd  = values[2];
+    webDmd  = (int)values[2];
     if ( (webDmd  > 72) | (webDmd  < 50) ) webDmd  = 50;
     //
     Thouse  = values[3];
@@ -375,27 +396,46 @@ double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
 BLYNK_WRITE(V4) {
     if (param.asInt() > 0)
     {
-        webDmd = (uint8_t)param.asDouble();
+        webDmd = (int)param.asDouble();
     }
+}
+int particleSet(String command)
+{
+  int possibleSet = atoi(command);
+  if (possibleSet >= 50 && possibleSet <= 72)
+  {
+      webDmd = possibleSet;
+      return possibleSet;
+  }
+  else return -1;
 }
 
 // Attach a switch widget to the Virtual pin 6 in your Blynk app - and demand continuous web control
 BLYNK_WRITE(V6) {
     webHold = param.asInt();
 }
+int particleHold(String command)
+{
+  if (command == "HOLD")
+  {
+    webHold = true;
+    return 1;
+  }
+  else
+  {
+     webHold = false;
+     return 0;
+  }
+}
 
 // Setup
 void setup()
 {
+//    SYSTEM_MODE(SEMI_AUTOMATIC);// this line causes SOS + hard fault (don't understand why)
     Serial.begin(9600);
     delay(1000); // Allow board to settle
     pinMode(LED, OUTPUT);               // sets pin as output
-    Particle.variable("call",       &call,                  BOOLEAN);
-    Particle.variable("temp",       &temp,                  DOUBLE);
-    Particle.variable("hum",        &hum,                   INT);
-    Particle.variable("pot",        &potValue,              INT);
-    Particle.variable("set",        &set,                   INT);
-    Particle.variable("stat",       &I2C_Status,            INT);
+    Particle.variable("stat", ststr);
     pinMode(HEAT_PIN,   OUTPUT);
     pinMode(POT_PIN,    INPUT);
 #ifdef HAVEI2C
@@ -405,9 +445,12 @@ void setup()
     matrix2.begin(0x71);
     setupMatrix(matrix1);
     setupMatrix(matrix2);
+#else
+    delay(10);
 #endif
     loadTemperature();
-    myTimer.begin(OnTimerDim, displayTime, hmSec);
+    myTimerC.begin(connect,    connectTime, hmSec);
+    myTimerD.begin(OnTimerDim, displayTime, hmSec);
 
     // Time schedule convert and check
     rtc.begin(&UDPClient, "pool.ntp.org");  // Workaround - see particle.io
@@ -429,18 +472,19 @@ void setup()
     weather->setFahrenheit();
 
     // Begin
+    Particle.connect();
+    Particle.function("HOLD", particleHold);
+    Particle.function("SET",  particleSet);
     Blynk.begin(blynkAuth);
     if (verbose>1) Serial.printf("End setup()\n");
 }
+
 
 // Loop
 void loop()
 {
     unsigned long           currentTime;        // Time result
     unsigned long           now = millis();     // Keep track of time
-    char*                   hmstr = new char[8];// time, hh:mm
-    static double           hour        = 0.0;  // Decimal time, hour
-    int                     potDmd      = 0;    // Pot value, deg F
     bool                    control;            // Control sequence, T/F
     bool                    publish;            // Publish, T/F
     bool                    read;               // Read, T/F
@@ -448,9 +492,17 @@ void loop()
     static unsigned long    lastControl = 0UL;  // Last control law time, ms
     static unsigned long    lastPublish = 0UL;  // Last publish time, ms
     static unsigned long    lastRead    = 0UL;  // Last read time, ms
+    char*   hmstrx  = new char[8];  // time, hh:mm
+    char*   ststrx  = new char[80]; // status string 
 
     // Sequencing
     Blynk.run();
+    if (millis() - lastSync > ONE_DAY_MILLIS)
+    {
+      // Request time synchronization from the Particle Cloud
+      Particle.syncTime();
+      lastSync = millis();
+    }
     control = (now-lastControl) >= controlDelay;
     publish = (now-lastPublish) >= publishDelay;
     read    = (now-lastRead)    >= readDelay;
@@ -489,6 +541,7 @@ void loop()
         rawTemp     |=Wire.read() >> 2;
         temp        = (float(rawTemp)*165.0/16383.0 - 40.0)*1.8 + 32.0 + TEMPCAL; // convert to fahrenheit and calibrate
 #else
+        delay(41); // Usual U2C_time
         temp    = modelTemperature(call, OAT, readDelay/1000);
 #endif
     }
@@ -505,7 +558,11 @@ void loop()
 
 
     // Interrogate schedule
-    if ( control ) hour = decimalTime(&currentTime, hmstr);
+    if ( control )
+    {
+      hour = decimalTime(&currentTime, hmstrx);
+      strcpy(hmstr, hmstrx);
+    }
     if ( read    )
     {
         double recoTime = recoveryTime(OAT);
@@ -529,7 +586,7 @@ void loop()
 
     // Initialize scheduling logic - don't change on boot
     static int      lastChangedPot      = potValue;
-    static uint8_t  lastChangedWebDmd   = webDmd;
+    static int      lastChangedWebDmd   = webDmd;
     static int      lastChangedSched    = schdDmd;
 
 
@@ -583,7 +640,8 @@ void loop()
     // dynamic logic when needed
     if ( control )
     {
-        updateTime  = (hour - lastHour)*3600.0;
+        if (verbose>4) Serial.printf("Control\n");
+        updateTime  = (hour - lastHour)*3600.0 + float(numTimeouts)/10.0;
         lastHour    = hour;
         if ( call )
         {
@@ -605,10 +663,15 @@ void loop()
     // Publish
     if ( publish )
     {
-        if (verbose>1) Serial.printf("V0=%d | V1=%d | V2=%f | V3=%d | V4=%u | V5=%d | V6=%d | V7=%f | V8=%f | V9=%d | V10=%d | V11=%d | V12=%d | V13=%f | V14=%d | V15=%s | V16=%f | V17=%d | V18=%f\n", \
+        if (verbose>4) Serial.printf("Publish\n");
+        sprintf(ststrx, "%s--> CALL %d | SET %d | TEMP %7.3f | HUM %d | WEB %d | HELD %d | T %5.2f | POT %d | LWEB %d | SCH %d | OAT %4.1f\0", \
+         hmstr, call, set, temp, hum, webDmd, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT);
+        strcpy(ststr, ststrx);
+        if (verbose>1) Serial.printf("V0=%d | V1=%d | V2=%f | V3=%d | V4=%d | V5=%d | V6=%d | V7=%f | V8=%f | V9=%d | V10=%d | V11=%d | V12=%d | V13=%f | V14=%d | V15=%s | V16=%f | V17=%d | V18=%f\n", \
             call, set, temp, hum, webDmd, held, webHold, hour, updateTime, potDmd, lastChangedWebDmd, set, schdDmd, temp, I2C_Status, hmstr, callf*3+72, reco, OAT);
         if ( Particle.connected() )
         {
+            if (verbose>4) Serial.printf("Blynk write\n");
             Blynk.virtualWrite(V0,  call);
             Blynk.virtualWrite(V1,  set);
             Blynk.virtualWrite(V2,  temp);
@@ -627,6 +690,13 @@ void loop()
             Blynk.virtualWrite(V17, reco);
             Blynk.virtualWrite(V18, OAT);
         }
+        else
+        {
+          if (verbose>4) Serial.printf("Particle.connect\n");
+          Particle.connect();
+        }
     }
     delete [] hmstr;
+    delete [] ststrx;
+    if (verbose>5) Serial.printf("end loop()\n");
 }  // loop
