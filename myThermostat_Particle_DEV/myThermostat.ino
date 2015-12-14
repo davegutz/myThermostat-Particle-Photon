@@ -70,7 +70,7 @@
 //  11. Connect a green numerical 50-72 1 sec display to V11 (SET)
 //  12. Connect an orange numerical 50-72 10 sec display to V12 (SCHD)
 //  13. Connect a red numerical 30-100 1 sec display to V13 (TEMP)
-//  14. Connect a blue history graph to V16 (CALLF)
+//  14. Connect a blue history graph to V16 (CALL)
 //  15. Connect an orange numerical 0-1 5 sec display to V17 (RECO)
 //  16. Connect a blue numerical -50 - 120 30 sec display to V18 (OAT)
 //
@@ -89,8 +89,8 @@ SYSTEM_THREAD(ENABLED);      // Make sure heat system code always run regardless
 #include <math.h>
 #include "adafruit-led-backpack.h"
 #include "pixmaps.h"
-#define HAVEI2C 1
-//#undef  HAVEI2C                             // Test feature to test code on simple Photon
+//#define HAVEI2C 1
+#undef  HAVEI2C                             // Test feature to test code on simple Photon
 #include "myAuth.h"
 /* This file myAutho.h is not in Git repository because it contains personal information.
 Make it yourself.   It should look like this, with your personal authorizations:
@@ -121,14 +121,13 @@ using namespace std;
 
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
-double              callf;                  // Floating point of bool call for calculation
-int                 connectTime     = 590000;// Avoid time particle connection timeout
+double              callCount;                  // Floating point of bool call for calculation
 Mode                controlMode     = POT;  // Present control mode
-int                 displayTime     = 10000;// Elapsed time display LED
+intPeriod           displayTime     = 10000;// Elapsed time display LED
 const   int         EEPROM_ADDR     = 10;   // Flash address
 bool                held            = false;// Web toggled permanent and acknowledged
-char*               hmstr   = new char[8];  // time, hh:mm
-static double       hour            = 0.0;  // Decimal time, hour
+char*               hmString        = new char[8];  // time, hh:mm
+static double       controlTime     = 0.0;  // Decimal time, hour
 int                 hum             = 0;    // Relative humidity integer value, %
 HttpClient*         httpClient;             // To get OAT from openweathermap
 int                 I2C_Status      = 0;    // Bus status
@@ -138,8 +137,7 @@ const   int         LED             = D7;   // Status LED
 Adafruit_8x8matrix  matrix1;                // Tens LED matrix
 Adafruit_8x8matrix  matrix2;                // Ones LED matrix
 IntervalTimer       myTimerD;               // To dim display
-IntervalTimer       myTimerC;               // To connect
-IntervalTimer       myTimer7;               // To blink LED
+IntervalTimer       myTimer7;               // To shift LED pattern for life
 int                 numTimeouts     = 0;    // Number of Particle.connect() needed to unfreeze
 double              OAT             = 30;   // Outside air temperature, F
 int                 potDmd          = 0;    // Pot value, deg F
@@ -148,7 +146,7 @@ bool                reco;                   // Indicator of recovering on cold d
 SparkTime           rtc;                    // Time value
 int                 schdDmd         = 62;   // Sched raw value, F
 int                 set             = 62;   // Selected sched, F
-char*               ststr   = new char[80]; // Status string
+char*               statusStr   = new char[80]; // Status string
 double              temp          = 65.0;   // Sensed temp, F
 double              Thouse;                 // House bulk temp, F
 UDP                 UDPClient;              // Time structure
@@ -181,17 +179,6 @@ static const float tempCh[7][NCH] = {
     68, 62, 68, 62, // Fri
     68, 62, 68, 62  // Sat
 };
-
-// Handler for the Particle connection, called automatically
-void connect()
-{
-  if (Particle.connected() == false)
-  {
-    Particle.connect();
-    numTimeouts++;
-  }
-  myTimerC.resetPeriod_SIT(connectTime, hmSec);
-}
 
 // Handler for the display dimmer timer, called automatically
 void OnTimerDim(void)
@@ -316,7 +303,7 @@ void setupMatrix(Adafruit_8x8matrix m)
 
 
 // Convert time to decimal for easy lookup
-double decimalTime(unsigned long *currentTime, char* hmstr)
+double decimalTime(unsigned long *currentTime, char* tempStr)
 {
     *currentTime = rtc.now();
     #ifndef FAKETIME
@@ -331,7 +318,7 @@ double decimalTime(unsigned long *currentTime, char* hmstr)
         uint8_t minutes   = 0;                                // forget minutes
         uint8_t seconds   = 0;                                // forget seconds
     #endif
-    sprintf(hmstr, "%02u:%02u\0", hours, minutes);
+    sprintf(tempStr, "%02u:%02u\0", hours, minutes);
     return (float(dayOfWeek)*24.0 + float(hours) + float(minutes)/60.0 + \
                         float(seconds)/3600.0);  // 0-6 days and 0 is Sunday
 }
@@ -435,7 +422,7 @@ void setup()
     Serial.begin(9600);
     delay(1000); // Allow board to settle
     pinMode(LED, OUTPUT);               // sets pin as output
-    Particle.variable("stat", ststr);
+    Particle.variable("stat", statusStr);
     pinMode(HEAT_PIN,   OUTPUT);
     pinMode(POT_PIN,    INPUT);
 #ifdef HAVEI2C
@@ -449,7 +436,6 @@ void setup()
     delay(10);
 #endif
     loadTemperature();
-    myTimerC.begin(connect,    connectTime, hmSec);
     myTimerD.begin(OnTimerDim, displayTime, hmSec);
 
     // Time schedule convert and check
@@ -492,8 +478,8 @@ void loop()
     static unsigned long    lastControl = 0UL;  // Last control law time, ms
     static unsigned long    lastPublish = 0UL;  // Last publish time, ms
     static unsigned long    lastRead    = 0UL;  // Last read time, ms
-    char*   hmstrx  = new char[8];  // time, hh:mm
-    char*   ststrx  = new char[80]; // status string 
+    char*   tempStr     = new char[8];          // time, hh:mm
+    char*   tmpsStr      = new char[80];         // status string
 
     // Sequencing
     Blynk.run();
@@ -508,7 +494,7 @@ void loop()
     read    = (now-lastRead)    >= readDelay;
     if ( control ) lastControl  = now;
     if ( publish ) lastPublish  = now;
-    if ( read )    lastRead     = now;
+    if ( read    ) lastRead     = now;
 
     // Get OAT
     if ( read )
@@ -558,15 +544,10 @@ void loop()
 
 
     // Interrogate schedule
-    if ( control )
-    {
-      hour = decimalTime(&currentTime, hmstrx);
-      strcpy(hmstr, hmstrx);
-    }
     if ( read    )
     {
         double recoTime = recoveryTime(OAT);
-        schdDmd = scheduledTemp(hour, recoTime, &reco);
+        schdDmd = scheduledTemp(controlTime, recoTime, &reco);
     }
 
     // Scheduling logic
@@ -640,23 +621,26 @@ void loop()
     // dynamic logic when needed
     if ( control )
     {
-        if (verbose>4) Serial.printf("Control\n");
-        updateTime  = (hour - lastHour)*3600.0 + float(numTimeouts)/10.0;
-        lastHour    = hour;
-        if ( call )
-        {
-            call    = ( (float(set)+float(HYST))  > temp);
-        }
-        else
-        {
-            call    = ( (float(set)-float(HYST))  > temp );
-        }
-        // 5 update persistence for call change to help those with fat fingers
-        callf   += max(min((float(call)-callf), 0.2), -0.2);
-        callf   =  max(min(callf,               1.0),  0.0);
-        call    =  callf >= 1.0;
-        digitalWrite(HEAT_PIN, call);
-        digitalWrite(LED, call);
+      if (verbose>4) Serial.printf("Control\n");
+      controlTime = decimalTime(&currentTime, tempStr);
+      updateTime  = (controlTime - lastHour)*3600.0 + float(numTimeouts)/10.0;
+      lastHour    = controlTime;
+      strcpy(hmString, tempStr);
+      bool callRaw;
+      if ( call )
+      {
+          callRaw    = ( (float(set)+float(HYST))  > temp);
+      }
+      else
+      {
+          callRaw    = ( (float(set)-float(HYST))  > temp );
+      }
+      // 5 update persistence for call change to help those with fat fingers
+      callCount   += max(min((float(callRaw)-callCount), 0.2), -0.2);
+      callCount   =  max(min(callCount,               1.0),  0.0);
+      call        =  callCount >= 1.0;
+      digitalWrite(HEAT_PIN, call);
+      digitalWrite(LED, call);
     }
 
 
@@ -664,11 +648,11 @@ void loop()
     if ( publish )
     {
         if (verbose>4) Serial.printf("Publish\n");
-        sprintf(ststrx, "%s--> CALL %d | SET %d | TEMP %7.3f | HUM %d | WEB %d | HELD %d | T %5.2f | POT %d | LWEB %d | SCH %d | OAT %4.1f\0", \
-         hmstr, call, set, temp, hum, webDmd, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT);
-        strcpy(ststr, ststrx);
+        sprintf(tmpsStr, "%s--> CALL %d | SET %d | TEMP %7.3f | HUM %d | WEB %d | HELD %d | T %5.2f | POT %d | LWEB %d | SCH %d | OAT %4.1f\0", \
+         hmString, call, set, temp, hum, webDmd, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT);
+        strcpy(statusStr, tmpsStr);
         if (verbose>1) Serial.printf("V0=%d | V1=%d | V2=%f | V3=%d | V4=%d | V5=%d | V6=%d | V7=%f | V8=%f | V9=%d | V10=%d | V11=%d | V12=%d | V13=%f | V14=%d | V15=%s | V16=%f | V17=%d | V18=%f\n", \
-            call, set, temp, hum, webDmd, held, webHold, hour, updateTime, potDmd, lastChangedWebDmd, set, schdDmd, temp, I2C_Status, hmstr, callf*3+72, reco, OAT);
+            call, set, temp, hum, webDmd, held, webHold, controlTime, updateTime, potDmd, lastChangedWebDmd, set, schdDmd, temp, I2C_Status, hmString, callCount*3+72, reco, OAT);
         if ( Particle.connected() )
         {
             if (verbose>4) Serial.printf("Blynk write\n");
@@ -677,7 +661,7 @@ void loop()
             Blynk.virtualWrite(V2,  temp);
             Blynk.virtualWrite(V3,  hum);
             Blynk.virtualWrite(V5,  held);
-            Blynk.virtualWrite(V7,  hour);
+            Blynk.virtualWrite(V7,  controlTime);
             Blynk.virtualWrite(V8,  updateTime);
             Blynk.virtualWrite(V9,  potDmd);
             Blynk.virtualWrite(V10, lastChangedWebDmd);
@@ -685,8 +669,8 @@ void loop()
             Blynk.virtualWrite(V12, schdDmd);
             Blynk.virtualWrite(V13, temp);
             Blynk.virtualWrite(V14, I2C_Status);
-            Blynk.virtualWrite(V15, hmstr);
-            Blynk.virtualWrite(V16, callf*3+72);
+            Blynk.virtualWrite(V15, hmString);
+            Blynk.virtualWrite(V16, callCount*3+72);
             Blynk.virtualWrite(V17, reco);
             Blynk.virtualWrite(V18, OAT);
         }
@@ -694,9 +678,10 @@ void loop()
         {
           if (verbose>4) Serial.printf("Particle.connect\n");
           Particle.connect();
+          numTimeouts++;
         }
     }
-    delete [] hmstr;
-    delete [] ststrx;
+    delete [] tempStr;
+    delete [] tmpsStr;
     if (verbose>5) Serial.printf("end loop()\n");
 }  // loop
