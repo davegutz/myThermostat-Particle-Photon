@@ -31,7 +31,7 @@ public:
 	void setFahrenheit();
 
 	// for cache:
-	weather_response_t cachedUpdate();
+	weather_response_t cachedUpdate(int verbose);
 
 private:
 	JsonParser<70> parser; // occupies 70 * 4 bytes

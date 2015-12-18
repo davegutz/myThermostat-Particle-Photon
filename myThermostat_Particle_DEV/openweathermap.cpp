@@ -67,7 +67,7 @@ bool Weather::parse(String& data, weather_response_t& response) {
 	data.getBytes(buffer, sizeof(buffer), 0);
 	JsonHashTable root = Weather::parser.parseHashTable((char*) buffer);
 	if (!root.success()) {
-		Serial.println("Parsing fail: could be an invalid JSON, or too many tokens");
+		Serial.printf("Parsing fail: could be an invalid JSON, or too many tokens, %s", (char*)buffer);
 		return false;
 	}
 	response.gmt 				= root.getLong("dt");
@@ -80,7 +80,7 @@ bool Weather::parse(String& data, weather_response_t& response) {
 /**
  * Reads from the cache if there is a fresh and valid response.
  */
-weather_response_t Weather::cachedUpdate() {
+weather_response_t Weather::cachedUpdate(int verbose) {
 	if (lastsync == 0 || (lastsync + weather_sync_interval) < millis()) {
 		weather_response_t resp;
 		if(this->update(resp)){
@@ -88,6 +88,7 @@ weather_response_t Weather::cachedUpdate() {
 			lastsync = millis();
 		}
 	} else {
+		if (verbose > 3)
 		Serial.println("using cached weather");
 	}
 	return lastReponse;

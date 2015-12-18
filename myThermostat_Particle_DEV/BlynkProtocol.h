@@ -263,10 +263,11 @@ bool BlynkProtocol<Transp>::processInput(void)
     }
     inputBuffer[hdr.length] = '\0';
 
+/*
 #ifdef BLYNK_DEBUG
     BLYNK_DBG_DUMP(">", inputBuffer, hdr.length);
 #endif
-
+*/
     lastActivityIn = millis();
 
     switch (hdr.type)
@@ -362,9 +363,11 @@ void BlynkProtocol<Transp>::sendCmd(uint8_t cmd, uint16_t id, const void* data, 
         memcpy(buff + len2s, data2, length2);
         len2s += length2;
     }
+/*
 #ifdef BLYNK_DEBUG
     BLYNK_DBG_DUMP("<", buff+5, len2s-5);
 #endif
+*/
     size_t wlen = 0;
 
 #ifndef BLYNK_SEND_CHUNK
