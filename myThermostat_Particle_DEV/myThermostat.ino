@@ -130,7 +130,7 @@ using namespace std;
 
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
-double              callCount;                  // Floating point of bool call for calculation
+double              callCount;              // Floating point of bool call for calculation
 Mode                controlMode     = POT;  // Present control mode
 intPeriod           displayTime     = 10000;// Elapsed time display LED
 const   int         EEPROM_ADDR     = 10;   // Flash address
@@ -166,7 +166,7 @@ UDP                 UDPClient;              // Time structure
 double              updateTime      = 0.0;  // Control law update time, sec
 static const int    verbose         = 3;    // Debug, as much as you can tolerate
 #ifndef NO_WEATHER
-  Weather*            weather;                // To get OAT from openweathermap
+  Weather*            weather;              // To get OAT from openweathermap
 #endif
 int                 webDmd          = 62;   // Web sched, F
 bool                webHold         = false;// Web permanence request
@@ -443,10 +443,10 @@ void setup()
 {
 //    SYSTEM_MODE(SEMI_AUTOMATIC);// this line causes SOS + hard fault (don't understand why)
   Serial.begin(9600);
-  delay(1000); // Allow board to settle
+  delay(2000); // Allow board to settle
   pinMode(LED, OUTPUT);               // sets pin as output
   #ifndef NO_PARTICLE
-    statStr.reserve(80);
+    statStr.reserve(120);
     Particle.variable("stat", statStr);
   #endif
   pinMode(HEAT_PIN,   OUTPUT);
@@ -480,8 +480,6 @@ void setup()
   {
       if (hourCh[day][num] >= hourCh[day][num+1]) hourChErr = true;
   }
-
-  if (verbose>3) Serial.printf("After hourCh in setup()\n");
 
   // OAT
   #ifndef NO_WEATHER
@@ -590,7 +588,7 @@ void loop()
     }
 
 
-    // Interrogate pot
+    // Interrogate pot; run fast for good tactile feedback
     // my pot puts out 2872 - 4088 observed using following
     #ifndef BARE_PHOTON
       potValue    = 4095 - analogRead(POT_PIN);
@@ -651,6 +649,7 @@ void loop()
         if (verbose>0) Serial.printf("Setpoint based on web:  %ld\n", t);
         lastChangedWebDmd   = webDmd;
     }
+    //
     // Otherwise if schedule has adjusted setpoint (overridden temporarily by pot or web, until next schd adjust)
     else if ( (fabsf(schdDmd-lastChangedSched)>0) & (!held) )
     {
