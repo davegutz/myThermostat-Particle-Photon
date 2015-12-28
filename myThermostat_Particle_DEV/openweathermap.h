@@ -6,7 +6,7 @@
 
 #ifndef _SPARKWEATHER
 #define _SPARKWEATHER
-
+#ifndef NO_WEATHER
 #include "application.h"
 #include "JsonParser.h"
 #include "HttpClient.h"
@@ -34,7 +34,7 @@ public:
 	weather_response_t cachedUpdate(int verbose);
 
 private:
-	JsonParser<70> parser; // occupies 70 * 4 bytes
+	JsonParser<75> parser; // occupies 75 * 4 bytes.   This was too small before 1/2016.
 
 
 	http_request_t 	request;
@@ -50,4 +50,5 @@ private:
 	weather_response_t 	lastReponse;
 };
 
+#endif
 #endif

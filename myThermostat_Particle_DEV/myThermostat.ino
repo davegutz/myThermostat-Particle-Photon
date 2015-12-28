@@ -10,7 +10,9 @@
 // 11-Nov-2015  DA Gutz     Created
 //
 /*  TODO:::::::::::::::::::
--   #defines for all the 50, 72 used
+    - WEATHER_BUG is turned on to illustrate memory leak that occurs when running with
+    WEATHER in openweathermap.  Rapid flashing cyan over time.   Stress test with
+    QUERY_DELAY = 100UL will reveal this quickly.
 */
 //
 // Requirements:
@@ -31,7 +33,8 @@
 // 11.  A new device must come alive with CALL off.
 // 12.  Logic should wait 5 seconds before turning furnace on or off, to help those with fat fingers
 //      to correct their keystrokes / sliding.
-// 13.  RECO function
+// 13.  Logic should not attempt to run more than one function in same pass.
+// 14.  RECO function
 //        o  Shift schedule early depending on OAT
 //        o  No shift for OAT>40 F
 //        o  1 hr shift for OAT<10 F
@@ -79,26 +82,27 @@
 //
 //#pragma SPARK_NO_PREPROCESSOR
 #include "application.h"
-SYSTEM_THREAD(ENABLED);      // Make sure heat system code always run regardless of network status
-//#define BARE_PHOTON
-//#define NO_WEATHER
-//#define NO_BLYNK
-//#define NO_PARTICLE
-#define BLYNK_TIMEOUT_MS     2000UL         // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
-#define BLYNK_DEBUG
-#define CONTROL_DELAY    1000UL             // Control law wait, ms
-#define PUBLISH_DELAY    10000UL            // Time between cloud updates, ms
-#define READ_DELAY       5000UL             // Sensor read wait, ms
-//#define  FAKETIME                           // For simulating rapid time passing
-#define HEAT_PIN    A1                      // Heat relay output pin on Photon
-#define HYST    0.5                         // Heat control law hysteresis, F
-#define POT_PIN     A2                      // Potentiometer input pin on Photon
-#define TEMP_SENSOR 0x27                    // Temp sensor bus address
-#define TEMPCAL -4                          // Calibrate temp sense, F
-#define MINSET  50                          // Minimum setpoint allowed, F
-#define MAXSET  72                          // Maximum setpoint allowed, F
-#define NCH     4                           // Number of temp changes in daily sched
-#define ONE_DAY_MILLIS (24 * 60 * 60 * 1000)
+SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
+//#define BARE_PHOTON                       // Run bare photon for testing
+#define NO_WEATHER                          // Turn off weather lookup.  Will get default OAT = 30F
+#define WEATHER_BUG                         // Turn on bad weather return for debugging, TODO
+//#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
+//#define NO_PARTICLE                       // Turn off Particle cloud functions.  Interact using Blynk.
+#define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
+#define CONTROL_DELAY    1000UL             // Control law wait (1000), ms
+#define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
+#define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
+#define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
+//#define  FAKETIME                         // For simulating rapid time passing
+#define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
+#define HYST        0.5                     // Heat control law hysteresis (0.5), F
+#define POT_PIN     A2                      // Potentiometer input pin on Photon (A2)
+#define TEMP_SENSOR 0x27                    // Temp sensor bus address (0x27)
+#define TEMPCAL     -4                      // Calibrate temp sense (0), F
+#define MINSET      50                      // Minimum setpoint allowed (50), F
+#define MAXSET      72                      // Maximum setpoint allowed (72), F
+#define NCH         4                       // Number of temp changes in daily sched (4)
+#define ONE_DAY_MILLIS (24 * 60 * 60 * 1000) // Number of milliseconds in one day (24*60*60*1000)
 #ifndef NO_WEATHER
   #include "openweathermap.h"
   #include "HttpClient.h"
@@ -164,7 +168,7 @@ double              temp          = 65.0;   // Sensed temp, F
 double              Thouse;                 // House bulk temp, F
 UDP                 UDPClient;              // Time structure
 double              updateTime      = 0.0;  // Control law update time, sec
-static const int    verbose         = 3;    // Debug, as much as you can tolerate
+static const int    verbose         = 0;    // Debug, as much as you can tolerate
 #ifndef NO_WEATHER
   Weather*            weather;              // To get OAT from openweathermap
 #endif
@@ -204,13 +208,11 @@ void OnTimerDim(void)
     if (!call)
     {
         matrix1.setCursor(1, 0);
-        //matrix1.write('.');
         matrix1.drawBitmap(0, 0, randomDot(), 8, 8, LED_ON);
     }
     else
     {
         matrix2.setCursor(1, 0);
-        //matrix2.write('+');
         matrix2.drawBitmap(0, 0, randomPlus(), 8, 8, LED_ON);
     }
     matrix1.setBrightness(1);  // 1-15
@@ -458,6 +460,8 @@ void setup()
     matrix2.begin(0x71);
     setupMatrix(matrix1);
     setupMatrix(matrix2);
+    setTemperature(0);            // Assure user reset happened
+    delay(2000);
   #else
     delay(10);
   #endif
@@ -507,18 +511,23 @@ void loop()
     unsigned long           currentTime;        // Time result
     unsigned long           now = millis();     // Keep track of time
     bool                    control;            // Control sequence, T/F
+    bool                    publishAny;         // Publish, T/F
     bool                    publish1;           // Publish, T/F
     bool                    publish2;           // Publish, T/F
     bool                    publish3;           // Publish, T/F
     bool                    publish4;           // Publish, T/F
+    bool                    query;              // Query schedule and OAT, T/F
     bool                    read;               // Read, T/F
+    bool                    checkPot;            // Display to LED, T/F
     static double           lastHour     = 0.0; // Past used time value,  hours
     static unsigned long    lastControl  = 0UL; // Last control law time, ms
     static unsigned long    lastPublish1 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish2 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish3 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish4 = 0UL; // Last publish time, ms
+    static unsigned long    lastQuery    = 0UL; // Last read time, ms
     static unsigned long    lastRead     = 0UL; // Last read time, ms
+
 
     // Sequencing
     #ifndef NO_BLYNK
@@ -531,8 +540,6 @@ void loop()
       lastSync = millis();
     }
 
-    control   = (now-lastControl) >= CONTROL_DELAY;
-    if ( control  ) lastControl   = now;
 
     publish1  = (now-lastPublish1) >= PUBLISH_DELAY*4;
     if ( publish1 ) lastPublish1  = now;
@@ -546,8 +553,23 @@ void loop()
     publish4  = ((now-lastPublish4) >= PUBLISH_DELAY*4)  && ((now-lastPublish1) >= PUBLISH_DELAY*3);
     if ( publish4 ) lastPublish4  = now;
 
-    read    = (now-lastRead)    >= READ_DELAY;
+    publishAny  = publish1 || publish2 || publish3 || publish4;
+
+    read    = ((now-lastRead) >= READ_DELAY) && !publishAny;
     if ( read     ) lastRead      = now;
+
+    query   = ((now-lastQuery)>= QUERY_DELAY) && !read;
+    if ( query    ) lastQuery     = now;
+
+    unsigned long deltaT = now - lastControl;
+    control = (deltaT >= CONTROL_DELAY) && !query;
+    if ( control  )
+    {
+      updateTime    = float(deltaT)/1000.0 + float(numTimeouts)/100.0;
+      lastControl   = now;
+    }
+
+    checkPot   = !control && !query  && !read && !publishAny;
 
     #ifndef NO_WEATHER
     // Get OAT
@@ -599,7 +621,7 @@ void loop()
 
 
     // Interrogate schedule
-    if ( read    )
+    if ( query    )
     {
         double recoTime = recoveryTime(OAT);
         schdDmd = scheduledTemp(controlTime, recoTime, &reco);
@@ -628,7 +650,7 @@ void loop()
 
     // If user has adjusted the potentiometer (overrides schedule until next schedule change)
     // Use potValue for checking because it has more resolution than the integer potDmd
-    if ( fabsf(potValue-lastChangedPot)>16 )  // adjust from 64 because my range is 1214 not 4095
+    if ( fabsf(potValue-lastChangedPot)>16 && checkPot )  // adjust from 64 because my range is 1214 not 4095
     {
         controlMode     = POT;
         int t = min(max(MINSET, potDmd), MAXSET);
@@ -680,7 +702,7 @@ void loop()
       if (verbose>4) Serial.printf("Control\n");
       char  tempStr[8];                           // time, hh:mm
       controlTime = decimalTime(&currentTime, tempStr);
-      updateTime  = (controlTime - lastHour)*3600.0 + float(numTimeouts)/10.0;
+      //updateTime  = float(controlTime-lastHour)*3600.0 + float(numTimeouts)/100.0;
       lastHour    = controlTime;
       hmString    = String(tempStr);
       bool callRaw;

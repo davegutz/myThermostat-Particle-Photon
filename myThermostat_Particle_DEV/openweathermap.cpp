@@ -1,4 +1,5 @@
 #include "openweathermap.h"
+#ifndef NO_WEATHER
 /*
 #include <cstdio>
 #include <limits>
@@ -65,11 +66,30 @@ bool Weather::parse(String& data, weather_response_t& response) {
 
 	unsigned char buffer[data.length()];
 	data.getBytes(buffer, sizeof(buffer), 0);
-	JsonHashTable root = Weather::parser.parseHashTable((char*) buffer);
-	if (!root.success()) {
-		Serial.printf("Parsing fail: could be an invalid JSON, or too many tokens, %s", (char*)buffer);
-		return false;
-	}
+	#ifndef WEATHER_BUG
+		JsonHashTable root = Weather::parser.parseHashTable((char*) buffer);
+		if (!root.success()) {
+			Serial.printf("Parsing fail: could be an invalid JSON, or too many tokens, %s", (char*)buffer);
+			return false;
+		}
+	#else
+		char* badb = \
+"{\"coord\":{\"lon\":-70.89,\"lat\":42.6},\
+\"weather\":[{\"id\":701,\"main\":\"Mist\",\"description\":\"mist\",\"icon\":\"50d\"},{\"id\":500,\"main\":\"Rain\",\"description\":\"light rain\",\"icon\":\"10d\"}],\
+\"base\":\"cmc stations\",\
+\"main\":{\"temp\":46.33,\"pressure\":1007,\"humidity\":93,\"temp_min\":42.01,\"temp_max\":54},\
+\"wind\":{\"speed\":5.62,\"deg\":20},\"clouds\":{\"all\":90},\
+\"dt\":1451249923,\
+\"sys\":{\"type\":1,\"id\":1273,\"message\":0.0058,\"country\":\"US\",\"sunrise\":1451218368,\"sunset\":1451251036},\
+\"id\":4954801,\
+\"name\":\"Wenham\",\
+\"cod\":200}";
+		JsonHashTable root = Weather::parser.parseHashTable(badb);
+		if (!root.success()) {
+			Serial.printf("Parsing fail: could be an invalid JSON, or too many tokens, %s", badb);
+			return false;
+		}
+	#endif
 	response.gmt 				= root.getLong("dt");
 	JsonHashTable main 	= root.getHashTable("main");
 	response.temp_now 	= main.getDouble("temp");
@@ -93,3 +113,4 @@ weather_response_t Weather::cachedUpdate(int verbose) {
 	}
 	return lastReponse;
 }
+#endif
