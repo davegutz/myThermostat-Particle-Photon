@@ -34,7 +34,7 @@ public:
 	weather_response_t cachedUpdate(int verbose);
 
 private:
-	JsonParser<75> parser; // occupies 75 * 4 bytes.   This was too small before 1/2016.
+	JsonParser<70> parser; // occupies 70 * 4 bytes.   70 is too small; causes flashing cyan due to memory mgmt problem
 
 
 	http_request_t 	request;
