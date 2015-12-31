@@ -8,118 +8,122 @@ get_weather will be the name of my call.
 particle knows my user auth id so this stuff will be available to me when I query
 
 */
+int     verbose             = 3;
 bool    weatherGood         = false;
 int     badWeatherCall      = 0;
 long    updateweatherhour   = 0;
+double  tempf               = 30;   // OAT, deg F
 
 // called once on startup
-void setup() {
-    // For simplicity, we'll format our weather data as text, and pipe it to serial.
-    // but you could just as easily display it in a webpage or pass the data to another system.
+void setup()
+{
+  // For simplicity, we'll format our weather data as text, and pipe it to serial.
+  // but you could just as easily display it in a webpage or pass the data to another system.
 
-    // Learn more about the serial commands here http://docs.particle.io/firmware/#communication-serial
-    // You can also watch what's sent over serial with the particle cli with
-    //  particle serial monitor
-    Serial.begin(115200);
+  // Learn more about the serial commands here http://docs.particle.io/firmware/#communication-serial
+  // You can also watch what's sent over serial with the particle cli with
+  //  particle serial monitor
+  Serial.begin(115200);
 
-    // Lets listen for the hook response
-    Spark.subscribe("hook-response/get_weather", gotWeatherData, MY_DEVICES);
+  // Lets listen for the hook response
+  Spark.subscribe("hook-response/get_weather", gotWeatherData, MY_DEVICES);
 
-    // Lets give ourselves 10 seconds before we actually start the program.
-    // That will just give us a chance to open the serial monitor before the program sends the request
-    for(int i=0;i<10;i++) {
-        Serial.println("waiting " + String(10-i) + " seconds before we publish");
-        delay(1000);
-    }
+  // Lets give ourselves 10 seconds before we actually start the program.
+  // That will just give us a chance to open the serial monitor before the program sends the request
+  for(int i=0;i<10;i++)
+  {
+    Serial.println("waiting " + String(10-i) + " seconds before we publish");
+    delay(1000);
+  }
 }
 
 
 // called forever really fast
-void loop() {
+void loop()
+{
+  // Let's request the weather, but no more than once every 60 seconds.
+  //Serial.println("Requesting Weather!");
 
-    // Let's request the weather, but no more than once every 60 seconds.
-    //Serial.println("Requesting Weather!");
+  //Spark.publish("get_weather");
+  // publish the event that will trigger our Webhook
+  if (Time.hour() != updateweatherhour)
+  {
+    if (verbose>2) Serial.println("Requesting Weather because out of date");
+    getWeather();
+  }
+  else
+  {
+    if (verbose>2) Serial.println("Weather up to date");
+  }
 
-    //Spark.publish("get_weather");
-    // publish the event that will trigger our Webhook
-    if (Time.hour() != updateweatherhour)
-    {
-        Serial.println("Requesting Weather because out of date");
-        getWeather();
-    }
-    else
-    {
-        Serial.println("Weather up to date");
-    }
-
-    // and wait at least 60 seconds before doing it again
-    delay(30000);
+  // and wait at least 60 seconds before doing it again
+  delay(30000);
 }
+
 
 // This function will get called when weather data comes in
 void gotWeatherData(const char *name, const char *data) {
-    // Important note!  -- Right now the response comes in 512 byte chunks.
-    //  This code assumes we're getting the response in large chunks, and this
-    //  assumption breaks down if a line happens to be split across response chunks.
-    //
-    // Sample data:
-    //  <location>Minneapolis, Minneapolis-St. Paul International Airport, MN</location>
-    //  <weather>Overcast</weather>
-    //  <temperature_string>26.0 F (-3.3 C)</temperature_string>
-    //  <temp_f>26.0</temp_f>
+  // Important note!  -- Right now the response comes in 512 byte chunks.
+  //  This code assumes we're getting the response in large chunks, and this
+  //  assumption breaks down if a line happens to be split across response chunks.
+  //
+  // Sample data:
+  //  <location>Minneapolis, Minneapolis-St. Paul International Airport, MN</location>
+  //  <weather>Overcast</weather>
+  //  <temperature_string>26.0 F (-3.3 C)</temperature_string>
+  //  <temp_f>26.0</temp_f>
 
+  String str          = String(data);
+  String locationStr  = tryExtractString(str, "<location>",     "</location>");
+  String weatherStr   = tryExtractString(str, "<weather>",      "</weather>");
+  String tempStr      = tryExtractString(str, "<temp_f>",       "</temp_f>");
+  String windStr      = tryExtractString(str, "<wind_string>",  "</wind_string>");
 
-    String str = String(data);
-    String locationStr = tryExtractString(str, "<location>", "</location>");
-    String weatherStr = tryExtractString(str, "<weather>", "</weather>");
-    String tempStr = tryExtractString(str, "<temp_f>", "</temp_f>");
-    String windStr = tryExtractString(str, "<wind_string>", "</wind_string>");
-
-    if (locationStr != NULL) {
-        Serial.println("At location: " + locationStr);
+  if (locationStr != NULL && verbose>3) {
+    Serial.println("At location: " + locationStr);
+  }
+  if (weatherStr != NULL && verbose>3) {
+    Serial.println("The weather is: " + weatherStr);
+  }
+  if (tempStr != NULL) {
+    tempf = atof(tempStr);
+    if (verbose>2)
+    {
+      Serial.println("The temp is: " + tempStr + String(" *F"));
+      Serial.printf("tempf=%f\n", tempf);
     }
+  }
+  if (windStr != NULL && verbose>3) {
+    Serial.println("The wind is: " + windStr);
+  }
 
-    if (weatherStr != NULL) {
-        Serial.println("The weather is: " + weatherStr);
-    }
-
-    if (tempStr != NULL) {
-        Serial.println("The temp is: " + tempStr + String(" *F"));
-        double tempf=atof(tempStr);
-        Serial.printf("tempf=%f\n",tempf);
-    }
-
-    if (windStr != NULL) {
-        Serial.println("The wind is: " + windStr);
-    }
-    weatherGood = true;
-    updateweatherhour = Time.hour();
+  weatherGood = true;
+  updateweatherhour = Time.hour();
 }
 
 // Returns any text found between a start and end string inside 'str'
 // example: startfooend  -> returns foo
 String tryExtractString(String str, const char* start, const char* end) {
-    if (str == NULL) {
-        return NULL;
-    }
-
-    int idx = str.indexOf(start);
-    if (idx < 0) {
-        return NULL;
-    }
-
-    int endIdx = str.indexOf(end);
-    if (endIdx < 0) {
-        return NULL;
-    }
-
-    return str.substring(idx + strlen(start), endIdx);
+  if (str == NULL)
+  {
+    return NULL;
+  }
+  int idx = str.indexOf(start);
+  if (idx < 0)
+  {
+    return NULL;
+  }
+  int endIdx = str.indexOf(end);
+  if (endIdx < 0)
+  {
+    return NULL;
+  }
+  return str.substring(idx + strlen(start), endIdx);
 }
 
 //Updates Weather Forecast Data
 void getWeather() {
-  Serial.print("in getWeather");
-  Serial.println();
+  if (verbose>3) Serial.println("in getWeather");
   weatherGood = false;
   // publish the event that will trigger our webhook
   Spark.publish("get_weather");
@@ -129,15 +133,18 @@ void getWeather() {
   while (!weatherGood && (millis() < wait + 5000UL))
     //Tells the core to check for incoming messages from particle cloud
     Spark.process();
-  if (!weatherGood) {
-    Serial.print("Weather update failed");
-    Serial.println();
-    badWeatherCall++;
-    if (badWeatherCall > 2) {
-      //If 3 webhook call fail in a row, Print fail
-      Serial.print("Webhook Weathercall failed!");
+    if (!weatherGood)
+    {
+      if (verbose>3) Serial.println("Weather update failed");
+      badWeatherCall++;
+      if (badWeatherCall > 2)
+      {
+        //If 3 webhook calls fail in a row, Print fail
+        if (verbose>3) Serial.println("Webhook Weathercall failed!");
+      }
     }
-  }
-  else
-    badWeatherCall = 0;
-}//End of getWeather function
+    else
+    {
+      badWeatherCall = 0;
+    }
+} //End of getWeather function
