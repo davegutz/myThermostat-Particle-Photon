@@ -83,9 +83,11 @@
 //#pragma SPARK_NO_PREPROCESSOR
 #include "application.h"
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
+#define WEATHER_WAIT      900UL             // Time to wait for webhook, ms
 //#define BARE_PHOTON                       // Run bare photon for testing
-#define NO_WEATHER                          // Turn off weather lookup.  Will get default OAT = 30F
-#define WEATHER_BUG                         // Turn on bad weather return for debugging, TODO
+//#define NO_WEATHER_HOOK                     // Turn off webhook weather lookup.  Will get default OAT = 30F
+#define NO_WEATHER                          // Turn off json weather lookup.  Will get default OAT = 30F
+//#define WEATHER_BUG                         // Turn on bad weather return for debugging, TODO
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
 //#define NO_PARTICLE                       // Turn off Particle cloud functions.  Interact using Blynk.
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
@@ -130,9 +132,13 @@ Make it yourself.   It should look like this, with your personal authorizations:
 const     String      weathAuth     = "796fb85518f8b9eac4ad983XXXb3246c";       // Get OAT
 const 	  int			    location 	    = 1111111;  // id number  List of city ID city.list.json.gz can be downloaded here http://bulk.openweathermap.org/sample/
 */
+
 using namespace std;
 
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
+#ifndef NO_WEATHER_HOOK
+  int               badWeatherCall  = 0;    // webhook lookup counter
+#endif
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 Mode                controlMode     = POT;  // Present control mode
@@ -165,12 +171,19 @@ int                 set             = 62;   // Selected sched, F
   String            statStr("WAIT...");     // Status string
 #endif
 double              temp          = 65.0;   // Sensed temp, F
+double              tempf         = 30;     // webhook OAT, deg F
 double              Thouse;                 // House bulk temp, F
 UDP                 UDPClient;              // Time structure
 double              updateTime      = 0.0;  // Control law update time, sec
-static const int    verbose         = 0;    // Debug, as much as you can tolerate
+#ifndef NO_WEATHER_HOOK
+  long              updateweatherhour= 0;   // Last hour weather updated
+#endif
+static const int    verbose         = 4;    // Debug, as much as you can tolerate
 #ifndef NO_WEATHER
   Weather*            weather;              // To get OAT from openweathermap
+#endif
+#ifndef NO_WEATHER_HOOK
+  bool              weatherGood     = false;// webhook OAT lookup successful, T/F
 #endif
 int                 webDmd          = 62;   // Web sched, F
 bool                webHold         = false;// Web permanence request
@@ -440,6 +453,119 @@ int particleHold(String command)
 }
 #endif
 
+#ifndef NO_WEATHER_HOOK
+// Returns any text found between a start and end string inside 'str'
+// example: startfooend  -> returns foo
+String tryExtractString(String str, const char* start, const char* end) {
+  if (str == NULL)
+  {
+    return NULL;
+  }
+  int idx = str.indexOf(start);
+  if (idx < 0)
+  {
+    return NULL;
+  }
+  int endIdx = str.indexOf(end);
+  if (endIdx < 0)
+  {
+    return NULL;
+  }
+  return str.substring(idx + strlen(start), endIdx);
+}
+
+
+// This function will get called when weather data comes in
+void gotWeatherData(const char *name, const char *data) {
+  // Important note!  -- Right now the response comes in 512 byte chunks.
+  //  This code assumes we're getting the response in large chunks, and this
+  //  assumption breaks down if a line happens to be split across response chunks.
+  //
+  // Sample data:
+  //  <location>Minneapolis, Minneapolis-St. Paul International Airport, MN</location>
+  //  <weather>Overcast</weather>
+  //  <temperature_string>26.0 F (-3.3 C)</temperature_string>
+  //  <temp_f>26.0</temp_f>
+
+  String str          = String(data);
+  String locationStr  = tryExtractString(str, "<location>",     "</location>");
+  String weatherStr   = tryExtractString(str, "<weather>",      "</weather>");
+  String tempStr      = tryExtractString(str, "<temp_f>",       "</temp_f>");
+  String windStr      = tryExtractString(str, "<wind_string>",  "</wind_string>");
+
+  if (locationStr != NULL && verbose>3) {
+    if(verbose>3) Serial.println("");
+    Serial.println("At location: " + locationStr);
+  }
+  if (weatherStr != NULL && verbose>3) {
+    Serial.println("The weather is: " + weatherStr);
+  }
+  if (tempStr != NULL) {
+    weatherGood = true;
+    #ifndef TESTING_WEATHER
+      updateweatherhour = Time.hour();  // To check once per hour
+    #endif
+    tempf = atof(tempStr);
+    if (verbose>2)
+    {
+      if (verbose<4) Serial.println("");
+      Serial.println("The temp is: " + tempStr + String(" *F"));
+      Serial.flush();
+      Serial.printf("tempf=%f\n", tempf);
+      Serial.flush();
+    }
+  }
+  if (windStr != NULL && verbose>3) {
+    Serial.println("The wind is: " + windStr);
+  }
+}
+
+//Updates Weather Forecast Data
+void getWeather()
+{
+  // Don't check if same hour
+  if (Time.hour() == updateweatherhour)
+  {
+    if (verbose>2 && weatherGood) Serial.printf("Weather up to date, tempf=%f\n", tempf);
+    return;
+  }
+
+  if (verbose>2)
+  {
+    Serial.print("Requesting Weather from webhook...");
+    Serial.flush();
+  }
+  weatherGood = false;
+  // publish the event that will trigger our webhook
+  Spark.publish("get_weather");
+
+  unsigned long wait = millis();
+  //wait for subscribe to kick in or 0.9 secs
+  while (!weatherGood && (millis() < wait + WEATHER_WAIT))
+  {
+    //Tells the core to check for incoming messages from partile cloud
+    Spark.process();
+    delay(50);
+  }
+  if (!weatherGood)
+  {
+    if (verbose>3) Serial.print("Weather update failed.  ");
+    badWeatherCall++;
+    if (badWeatherCall > 2)
+    {
+      //If 3 webhook calls fail in a row, Print fail
+      if (verbose>0) Serial.println("Webhook Weathercall failed!");
+      badWeatherCall = 0;
+    }
+  }
+  else
+  {
+    badWeatherCall = 0;
+  }
+} //End of getWeather function
+#endif
+
+
 // Setup
 void setup()
 {
@@ -486,6 +612,10 @@ void setup()
   }
 
   // OAT
+  // Lets listen for the hook response
+  #ifndef NO_WEATHER_HOOK
+    Spark.subscribe("hook-response/get_weather", gotWeatherData, MY_DEVICES);
+  #endif
   #ifndef NO_WEATHER
     httpClient  = new HttpClient();
     weather     = new Weather(location, httpClient, weathAuth);
@@ -500,6 +630,11 @@ void setup()
   #endif
   #ifndef NO_BLYNK
     Blynk.begin(blynkAuth.c_str());
+  #endif
+  #ifndef NO_WEATHER_HOOK
+    if (verbose>0)Serial.print("initializing weather...");
+    Serial.flush();
+    getWeather();
   #endif
   if (verbose>1) Serial.printf("End setup()\n");
 }
@@ -528,6 +663,12 @@ void loop()
     static unsigned long    lastQuery    = 0UL; // Last read time, ms
     static unsigned long    lastRead     = 0UL; // Last read time, ms
 
+    #ifdef NO_WEATHER
+      #ifdef NO_WEATHER_HOOK
+      Serial.println("ERROR:   NO_WEATHER_HOOK and NO_WEATHER cannot both be active");
+      Serial.flush();
+      #endif
+    #endif
 
     // Sequencing
     #ifndef NO_BLYNK
@@ -581,6 +722,21 @@ void loop()
         {
           OAT = resp.temp_now;
         }
+      }
+    #endif
+    #ifndef NO_WEATHER_HOOK
+      // Get OAT webhook
+      if ( query    )
+      {
+        unsigned long           then = millis();     // Keep track of time
+        getWeather();
+        unsigned long           now = millis();     // Keep track of time
+        if (verbose>0) Serial.printf("weather update=%f\n", float(now-then)/1000.0);
+        if ( weatherGood )
+        {
+          OAT = tempf;
+        }
+        if (verbose>5) Serial.printf("OAT=%f at %s\n", OAT, hmString.c_str());
       }
     #endif
 
