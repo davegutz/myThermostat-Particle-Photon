@@ -95,6 +95,8 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
+#define DIM_DELAY        10000              // LED display timeout to dim, ms
+#define DISPLAY_DELAY    501                // LED display scheduling frame time, ms
 //#define  FAKETIME                         // For simulating rapid time passing
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
 #define HYST        0.5                     // Heat control law hysteresis (0.5), F
@@ -142,7 +144,6 @@ enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 Mode                controlMode     = POT;  // Present control mode
-intPeriod           displayTime     = 10000;// Elapsed time display LED
 const   int         EEPROM_ADDR     = 10;   // Flash address
 bool                held            = false;// Web toggled permanent and acknowledged
 String              hmString        = "00:00"; // time, hh:mm
@@ -212,37 +213,46 @@ static const float tempCh[7][NCH] = {
     68, 62, 68, 62  // Sat
 };
 
+// Put randomly placed activity pattern on LED display
+void displayRandom(void)
+{
+  matrix1.clear();
+  matrix2.clear();
+  if (!call)
+  {
+    matrix1.setCursor(1, 0);
+    matrix1.drawBitmap(0, 0, randomDot(), 8, 8, LED_ON);
+  }
+  else
+  {
+    matrix2.setCursor(1, 0);
+    matrix2.drawBitmap(0, 0, randomPlus(), 8, 8, LED_ON);
+  }
+  matrix1.setBrightness(1);  // 1-15
+  matrix2.setBrightness(1);  // 1-15
+  matrix1.writeDisplay();
+  matrix2.writeDisplay();
+  // Reset clock
+  myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
+}
+
+
 // Handler for the display dimmer timer, called automatically
-void OnTimerDim(void)
+void onTimerDim(void)
 {
 #ifndef BARE_PHOTON
-    matrix1.clear();
-    matrix2.clear();
-    if (!call)
-    {
-        matrix1.setCursor(1, 0);
-        matrix1.drawBitmap(0, 0, randomDot(), 8, 8, LED_ON);
-    }
-    else
-    {
-        matrix2.setCursor(1, 0);
-        matrix2.drawBitmap(0, 0, randomPlus(), 8, 8, LED_ON);
-    }
-    matrix1.setBrightness(1);  // 1-15
-    matrix2.setBrightness(1);  // 1-15
-    matrix1.writeDisplay();
-    matrix2.writeDisplay();
+  displayRandom();
 #endif
 }
 
 // Display the temperature setpoint on LED matrices.   All the ways to set temperature
 // are displayed on the matrices.  It's cool to see the web and schedule adjustments change
 // the display briefly.
-void displayTemperature(void)
+void displayTemperature(int temp)
 {
 #ifndef BARE_PHOTON
-    char ones = abs(set) % 10;
-    char tens =(abs(set) / 10) % 10;
+    char ones = abs(temp) % 10;
+    char tens =(abs(temp) / 10) % 10;
     matrix1.clear();
     matrix1.setCursor(0, 0);
     matrix1.write(tens + '0');
@@ -257,7 +267,32 @@ void displayTemperature(void)
     matrix2.writeDisplay();
 #endif
     // Reset clock
-    myTimerD.resetPeriod_SIT(displayTime, hmSec);
+    myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
+}
+
+// Display the temperature setpoint on LED matrices.   All the ways to set temperature
+// are displayed on the matrices.  It's cool to see the web and schedule adjustments change
+// the display briefly.
+void displayMessage(const String str)
+{
+#ifndef BARE_PHOTON
+    char first  = str[0];
+    char second = str[1];
+    matrix1.clear();
+    matrix1.setCursor(0, 0);
+    matrix1.write(first);
+    matrix1.setBrightness(1);  // 1-15
+    matrix1.blinkRate(0);      // 0-3
+    matrix1.writeDisplay();
+    matrix2.clear();
+    matrix2.setCursor(0, 0);
+    matrix2.write(second);
+    matrix2.setBrightness(1);  // 1-15
+    matrix2.blinkRate(0);      // 0-3
+    matrix2.writeDisplay();
+#endif
+    // Reset clock
+    myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
 }
 
 // Simple embedded house model for testing logic
@@ -293,7 +328,7 @@ void loadTemperature()
     //
     set     = values[0];
     if ( (set     > MAXSET  ) | (set     < MINSET  ) ) set     = MINSET;
-    displayTemperature();
+    displayTemperature(set);
     //
     webHold = values[1];
     if ( (webHold >    1    ) | (webHold <    0    ) ) webHold =  0;
@@ -306,12 +341,12 @@ void loadTemperature()
 }
 
 // Process a new temperature setting.   Display and save it.
-int setTemperature(int t)
+int setSaveDisplayTemp(int t)
 {
     set = t;
     switch(controlMode)
     {
-        case POT:   displayTemperature();   break;
+        case POT:   displayTemperature(set);   break;
         case WEB:   break;
         case SCHD:  break;
     }
@@ -586,13 +621,13 @@ void setup()
     matrix2.begin(0x71);
     setupMatrix(matrix1);
     setupMatrix(matrix2);
-    setTemperature(0);            // Assure user reset happened
+    setSaveDisplayTemp(0);            // Assure user reset happened
     delay(2000);
   #else
     delay(10);
   #endif
   loadTemperature();
-  myTimerD.begin(OnTimerDim, displayTime, hmSec);
+  myTimerD.begin(onTimerDim, DIM_DELAY, hmSec);
 
   // Time schedule convert and check
   rtc.begin(&UDPClient, "pool.ntp.org");  // Workaround - see particle.io
@@ -646,6 +681,8 @@ void loop()
     unsigned long           currentTime;        // Time result
     unsigned long           now = millis();     // Keep track of time
     bool                    control;            // Control sequence, T/F
+    bool                    display;            // LED display sequence, T/F
+    static uint8_t          displayCount  = 0;  // Frame number to execute
     bool                    publishAny;         // Publish, T/F
     bool                    publish1;           // Publish, T/F
     bool                    publish2;           // Publish, T/F
@@ -656,6 +693,7 @@ void loop()
     bool                    checkPot;            // Display to LED, T/F
     static double           lastHour     = 0.0; // Past used time value,  hours
     static unsigned long    lastControl  = 0UL; // Last control law time, ms
+    static unsigned long    lastDisplay  = 0UL; // Las display time, ms
     static unsigned long    lastPublish1 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish2 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish3 = 0UL; // Last publish time, ms
@@ -681,8 +719,7 @@ void loop()
       lastSync = millis();
     }
 
-
-    publish1  = (now-lastPublish1) >= PUBLISH_DELAY*4;
+    publish1  = ((now-lastPublish1) >= PUBLISH_DELAY*4);
     if ( publish1 ) lastPublish1  = now;
 
     publish2  = ((now-lastPublish2) >= PUBLISH_DELAY*4)  && ((now-lastPublish1) >= PUBLISH_DELAY);
@@ -702,8 +739,11 @@ void loop()
     query   = ((now-lastQuery)>= QUERY_DELAY) && !read;
     if ( query    ) lastQuery     = now;
 
+    display   = ((now-lastDisplay) >= DISPLAY_DELAY) && !query;
+    if ( display ) lastDisplay    = now;
+
     unsigned long deltaT = now - lastControl;
-    control = (deltaT >= CONTROL_DELAY) && !query;
+    control = (deltaT >= CONTROL_DELAY) && !display;
     if ( control  )
     {
       updateTime    = float(deltaT)/1000.0 + float(numTimeouts)/100.0;
@@ -810,7 +850,7 @@ void loop()
     {
         controlMode     = POT;
         int t = min(max(MINSET, potDmd), MAXSET);
-        setTemperature(t);
+        setSaveDisplayTemp(t);
         held = false;  // allow the pot to override the web demands.  HELD allows web to override schd.
         if (verbose>0) Serial.printf("Setpoint based on pot:  %ld\n", t);
         lastChangedPot = potValue;
@@ -823,7 +863,7 @@ void loop()
     {
         controlMode     = WEB;
         int t = min(max(MINSET, webDmd), MAXSET);
-        setTemperature(t);
+        setSaveDisplayTemp(t);
         if (verbose>0) Serial.printf("Setpoint based on web:  %ld\n", t);
         lastChangedWebDmd   = webDmd;
     }
@@ -839,7 +879,7 @@ void loop()
         }
         else
         {
-            setTemperature(t);
+            setSaveDisplayTemp(t);
             if (verbose>0) Serial.printf("Setpoint based on schedule:  %ld\n", t);
         }
         lastChangedSched = schdDmd;
@@ -850,6 +890,47 @@ void loop()
         held        = webHold;
         saveTemperature();
     }
+
+
+    // Display Sequencing
+    // Run a different frame each time in here
+    if ( display )
+    {
+      switch ( displayCount++ )
+      {
+        case 1:
+          displayMessage("S=");
+          break;
+        case 2:
+          displayTemperature(set);
+          break;
+        case 4:
+          displayMessage("T=");
+          break;
+        case 5:
+          displayTemperature(temp);
+          break;
+        case 7:
+          displayMessage("O=");
+          break;
+        case 8:
+          displayTemperature(OAT);
+          break;
+        case 10:
+          displayMessage("H=");
+          break;
+        case 11:
+          displayTemperature(hum);
+          break;
+        case 13:
+          displayRandom();
+          break;
+        case 18:
+          displayCount = 0;
+          break;
+        }
+    }
+
 
     // Control law.   Simple on/off but update time structure ('control' calculation) provided for
     // dynamic logic when needed
