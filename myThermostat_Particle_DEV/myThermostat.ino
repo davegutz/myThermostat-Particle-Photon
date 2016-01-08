@@ -1,4 +1,4 @@
-// myScheduledThermostat.ino
+// myThermostat.ino
 //
 // Control home heating (not cooling) with a potentiometer, a web interface
 // (Blynk), and by schedules.  This is written for a Particle Photon
@@ -41,6 +41,10 @@
 //        o  linear in between and extrapolate colder
 //        o  No shift for turning off furnace
 //        o  Boolean indicator on Blynk
+// 15.  Temperature compensation
+//        o  Shift temperature to anticipate based on rate
+//        o  Filter time constant for rate picked to be 1/10 of observed home constant
+//        o  Gain picked to produce tempComp that is equal to observed overshoot
 //
 // Nomenclature:
 // CALL     Call for heat, boolean
@@ -56,6 +60,7 @@
 // SET      Temperature setpoint of thermostat, F
 // T        Control law update time, sec
 // TEMP     Measured temperature, F
+// TEMPF    Filtered anticipation temperature, F
 // WEB      The Web temperature demand, F
 //
 // On your Blynk app:
@@ -83,13 +88,19 @@
 //#pragma SPARK_NO_PREPROCESSOR
 #include "application.h"
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
-#define WEATHER_WAIT      900UL             // Time to wait for webhook, ms
-//#define BARE_PHOTON                       // Run bare photon for testing
+//
+// Disable flags if needed
+//#define BARE_PHOTON                         // Run bare photon for testing
 //#define NO_WEATHER_HOOK                     // Turn off webhook weather lookup.  Will get default OAT = 30F
-#define NO_WEATHER                          // Turn off json weather lookup.  Will get default OAT = 30F
-//#define WEATHER_BUG                         // Turn on bad weather return for debugging, TODO
+//#define WEATHER_BUG                         // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
 //#define NO_PARTICLE                       // Turn off Particle cloud functions.  Interact using Blynk.
+//
+// Usually on
+#define NO_WEATHER                          // Turn off json weather lookup.  Will get default OAT = 30F
+//
+// Constants
+#define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
 #define CONTROL_DELAY    1000UL             // Control law wait (1000), ms
 #define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
@@ -97,7 +108,12 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
 #define DIM_DELAY        10000              // LED display timeout to dim, ms
 #define DISPLAY_DELAY    501                // LED display scheduling frame time, ms
-//#define  FAKETIME                         // For simulating rapid time passing
+#ifndef BARE_PHOTON
+  #define FILTER_DELAY     50000            // In range of tau/4 - tau/3  * 1000, ms
+#else
+  #define FILTER_DELAY     3500             // In range of tau/4 - tau/3  * 1000, ms
+#endif
+//#define  FAKETIME                         // For simulating rapid time passing of schedule
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
 #define HYST        0.5                     // Heat control law hysteresis (0.5), F
 #define POT_PIN     A2                      // Potentiometer input pin on Photon (A2)
@@ -134,6 +150,7 @@ Make it yourself.   It should look like this, with your personal authorizations:
 const     String      weathAuth     = "796fb85518f8b9eac4ad983XXXb3246c";       // Get OAT
 const 	  int			    location 	    = 1111111;  // id number  List of city ID city.list.json.gz can be downloaded here http://bulk.openweathermap.org/sample/
 */
+#include "myFilters.h"
 
 using namespace std;
 
@@ -143,6 +160,11 @@ enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 #endif
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
+#ifndef BARE_PHOTON
+  double              compGain        = 200.;// Temperature compensation gain, deg/(deg/sec)
+#else
+  double              compGain        = 20.;  // Temperature compensation gain, deg/(deg/sec)
+#endif
 Mode                controlMode     = POT;  // Present control mode
 const   int         EEPROM_ADDR     = 10;   // Flash address
 bool                held            = false;// Web toggled permanent and acknowledged
@@ -156,8 +178,10 @@ int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
 unsigned long       lastSync     = millis();// Sync time occassionally
 const   int         LED             = D7;   // Status LED
-Adafruit_8x8matrix  matrix1;                // Tens LED matrix
-Adafruit_8x8matrix  matrix2;                // Ones LED matrix
+#ifndef BARE_PHOTON
+  Adafruit_8x8matrix  matrix1;                // Tens LED matrix
+  Adafruit_8x8matrix  matrix2;                // Ones LED matrix
+#endif
 IntervalTimer       myTimerD;               // To dim display
 IntervalTimer       myTimer7;               // To shift LED pattern for life
 int                 numTimeouts     = 0;    // Number of Particle.connect() needed to unfreeze
@@ -171,7 +195,13 @@ int                 set             = 62;   // Selected sched, F
 #ifndef NO_PARTICLE
   String            statStr("WAIT...");     // Status string
 #endif
+#ifndef BARE_PHOTON
+  double            tau           = 120.0;  // Rate filter time constant, sec, ~1/10 observed home time constant
+#else
+  double            tau           = 12.0;   // Rate filter time constant, sec, ~1/10 observed home time constant
+#endif
 double              temp          = 65.0;   // Sensed temp, F
+double              tempComp;               // Sensed compensated temp, F
 double              tempf         = 30;     // webhook OAT, deg F
 double              Thouse;                 // House bulk temp, F
 UDP                 UDPClient;              // Time structure
@@ -213,9 +243,13 @@ static const float tempCh[7][NCH] = {
     68, 62, 68, 62  // Sat
 };
 
+// Rate filter
+RateLagExp*  rateFilter;
+
 // Put randomly placed activity pattern on LED display
 void displayRandom(void)
 {
+#ifndef BARE_PHOTON
   matrix1.clear();
   matrix2.clear();
   if (!call)
@@ -232,6 +266,7 @@ void displayRandom(void)
   matrix2.setBrightness(1);  // 1-15
   matrix1.writeDisplay();
   matrix2.writeDisplay();
+#endif
   // Reset clock
   myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
 }
@@ -303,7 +338,7 @@ double modelTemperature(bool call, double OAT, double T)
     static const    double Hhouse     = 400;    // House loss, BTU/hr/F
     double dQ   = float(call)*Qfurnace - Hhouse*(Thouse-OAT);   // BTU/hr
     double dTdt = dQ/Chouse/3600.0;             // House rate of change, F/sec
-    Thouse      += dTdt*T;
+    Thouse      += dTdt*float(FILTER_DELAY)/1000.0;
     Thouse      = min(max(Thouse, 40), 90);
     return(Thouse);
 }
@@ -657,6 +692,9 @@ void setup()
     weather->setFahrenheit();
   #endif
 
+  // Rate filter
+  rateFilter  = new RateLagExp(float(FILTER_DELAY)/1000.0, tau, -0.1, 0.1);
+
   // Begin
   Particle.connect();
   #ifndef NO_PARTICLE
@@ -683,6 +721,7 @@ void loop()
     bool                    control;            // Control sequence, T/F
     bool                    display;            // LED display sequence, T/F
     static uint8_t          displayCount  = 0;  // Frame number to execute
+    bool                    filter;             // Filter for temperature, T/F
     bool                    publishAny;         // Publish, T/F
     bool                    publish1;           // Publish, T/F
     bool                    publish2;           // Publish, T/F
@@ -694,12 +733,15 @@ void loop()
     static double           lastHour     = 0.0; // Past used time value,  hours
     static unsigned long    lastControl  = 0UL; // Last control law time, ms
     static unsigned long    lastDisplay  = 0UL; // Las display time, ms
+    static unsigned long    lastFilter   = 0UL; // Last filter time, ms
     static unsigned long    lastPublish1 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish2 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish3 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish4 = 0UL; // Last publish time, ms
     static unsigned long    lastQuery    = 0UL; // Last read time, ms
     static unsigned long    lastRead     = 0UL; // Last read time, ms
+    static int              RESET        = 1;   // Dynamic initialization flag, T/F
+    static double           tempRate;           // Rate of change of temp, deg F/sec
 
     #ifdef NO_WEATHER
       #ifdef NO_WEATHER_HOOK
@@ -718,6 +760,9 @@ void loop()
       Particle.syncTime();
       lastSync = millis();
     }
+
+    filter    = ((now-lastFilter)>=FILTER_DELAY) || RESET>0;
+    if ( filter )   lastFilter    = now;
 
     publish1  = ((now-lastPublish1) >= PUBLISH_DELAY*4);
     if ( publish1 ) lastPublish1  = now;
@@ -804,7 +849,14 @@ void loop()
           temp    = modelTemperature(call, OAT, READ_DELAY/1000);
         #endif
     }
-
+    if ( filter )
+    {
+        tempRate = rateFilter->calculate(temp, RESET);
+        if ( verbose > 4) Serial.printf("%f %f %f %f %f %f\n", rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), tempRate );
+//        tempRate = 0.0;
+        RESET = 0;
+    }
+    if ( read ) tempComp  = temp + tempRate*compGain;
 
     // Interrogate pot; run fast for good tactile feedback
     // my pot puts out 2872 - 4088 observed using following
@@ -908,7 +960,7 @@ void loop()
           displayMessage("T=");
           break;
         case 5:
-          displayTemperature(temp);
+          displayTemperature(roundf(temp));
           break;
         case 7:
           displayMessage("O=");
@@ -945,11 +997,11 @@ void loop()
       bool callRaw;
       if ( call )
       {
-          callRaw    = ( (float(set)+float(HYST))  > temp);
+          callRaw    = ( (float(set)+float(HYST))  > tempComp);
       }
       else
       {
-          callRaw    = ( (float(set)-float(HYST))  > temp );
+          callRaw    = ( (float(set)-float(HYST))  > tempComp );
       }
       // 5 update persistence for call change to help those with fat fingers
       callCount   += max(min((float(callRaw)-callCount),  0.2), -0.2);
@@ -964,8 +1016,8 @@ void loop()
     if ( publish1 || publish2 || publish3 || publish4 )
     {
       char  tmpsStr[100];
-      sprintf(tmpsStr, "%s--> CALL %d | SET %d | TEMP %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | LWEB %d | SCH %d | OAT %4.1f\0", \
-      hmString.c_str(), call, set, temp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT);
+      sprintf(tmpsStr, "%s--> CALL %d | SET %d | TEMP %7.3f | TEMPC %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | LWEB %d | SCH %d | OAT %4.1f\0", \
+      hmString.c_str(), call, set, temp, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
       #endif
@@ -980,6 +1032,7 @@ void loop()
               Blynk.virtualWrite(V1,  set);
               Blynk.virtualWrite(V2,  temp);
               Blynk.virtualWrite(V3,  hum);
+//              Blynk.virtualWrite(V4,  tempComp);
             }
             if (publish2)
             {
