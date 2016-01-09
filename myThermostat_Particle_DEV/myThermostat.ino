@@ -109,9 +109,9 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define DIM_DELAY        10000              // LED display timeout to dim, ms
 #define DISPLAY_DELAY    501                // LED display scheduling frame time, ms
 #ifndef BARE_PHOTON
-  #define FILTER_DELAY     50000            // In range of tau/4 - tau/3  * 1000, ms
+  #define FILTER_DELAY   10000              // In range of tau/4 - tau/3  * 1000, ms
 #else
-  #define FILTER_DELAY     3500             // In range of tau/4 - tau/3  * 1000, ms
+  #define FILTER_DELAY   3500               // In range of tau/4 - tau/3  * 1000, ms
 #endif
 //#define  FAKETIME                         // For simulating rapid time passing of schedule
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
@@ -161,7 +161,7 @@ enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 #ifndef BARE_PHOTON
-  double              compGain        = 200.;// Temperature compensation gain, deg/(deg/sec)
+  double              compGain        = 100.;// Temperature compensation gain, deg/(deg/sec)
 #else
   double              compGain        = 20.;  // Temperature compensation gain, deg/(deg/sec)
 #endif
@@ -196,7 +196,7 @@ int                 set             = 62;   // Selected sched, F
   String            statStr("WAIT...");     // Status string
 #endif
 #ifndef BARE_PHOTON
-  double            tau           = 120.0;  // Rate filter time constant, sec, ~1/10 observed home time constant
+  double            tau           =  20.0;  // Rate filter time constant, sec, ~1/10 observed home time constant
 #else
   double            tau           = 12.0;   // Rate filter time constant, sec, ~1/10 observed home time constant
 #endif
@@ -1032,7 +1032,7 @@ void loop()
               Blynk.virtualWrite(V1,  set);
               Blynk.virtualWrite(V2,  temp);
               Blynk.virtualWrite(V3,  hum);
-//              Blynk.virtualWrite(V4,  tempComp);
+              Blynk.virtualWrite(V4,  tempComp);
             }
             if (publish2)
             {
