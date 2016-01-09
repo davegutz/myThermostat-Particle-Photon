@@ -1,119 +1,125 @@
-// myThermostat.ino
-//
-// Control home heating (not cooling) with a potentiometer, a web interface
-// (Blynk), and by schedules.  This is written for a Particle Photon
-// target.  The electrical schematic is the same as the Spark Nest Thermostat
-// project with I2C 4.7K pullup resistors added and the solid state relay swapped out for
-// a Reed relay to control a Triangle Tube Prestige furnace interface (Honeywell
-// dial thermostat compatible).
-//
-// 11-Nov-2015  DA Gutz     Created
-//
-/*  TODO:::::::::::::::::::
-    - WEATHER_BUG is turned on to illustrate memory leak that occurs when running with
-    WEATHER in openweathermap.  Rapid flashing cyan over time.   Stress test with
-    QUERY_DELAY = 100UL will reveal this quickly.
+/* myThermostat.ino
+  Control home heating (not cooling) with a potentiometer, a web interface
+  (Blynk), and by schedules.  This is written for a Particle Photon
+  target.  The electrical schematic is the same as the Spark Nest Thermostat
+  project with I2C 4.7K pullup resistors added and the solid state relay swapped out for
+  a Reed relay to control a Triangle Tube Prestige furnace interface (Honeywell
+  dial thermostat compatible).
+
+  11-Nov-2015   Dave Gutz   Created
+
+  TODO:::::::::::::::::::
+  - WEATHER_BUG is turned on to illustrate memory leak that occurs when running with
+  WEATHER in openweathermap.  Rapid flashing cyan over time.   Stress test with
+  QUERY_DELAY = 100UL will reveal this quickly.
+
+
+  Requirements:
+  1.  Read temperature.
+  2.  Determine setpoint and turn on furnace relay when temperature < setpoint.  Turn off relay when temperature
+      reaches setpoint.
+  3.  Read potentiometer POT and set a demand based on the reading.
+  4.  Read Blynk Web demanded temperature WEB and set a demand based on the reading.
+  5.  Read Blynk Web over-ride and disable the schedule and web demand functions as long as latched.
+  6.  Schedule 4 changes in all 7 days of the week.   When time reaches a change
+      table time instantly change demand to the change table temperature and hold.
+  7.  Potentiometer is physically present and must always win if it is most recent change of
+      setpoint.
+  8.  The Blynk Web is needed to set temperature remotely for some reason and must win over the
+      schedule but only if demanded so.
+  9.  Following power loss the functions must return to the exact settings.
+  10. Automatically change with daylight savings (this is built into SparkTime as default)
+  11. A new device must come alive with CALL off.
+  12. Logic should wait 5 seconds before turning furnace on or off, to help those with fat fingers
+      to correct their keystrokes / sliding.
+  13. Logic should not attempt to run more than one function in same pass.
+  14. RECO function
+      o Shift schedule early depending on OAT
+      o No shift for OAT>40 F
+      o 1 hr shift for OAT<10 F
+      o linear in between and extrapolate colder
+      o No shift for turning off furnace
+      o Boolean indicator on Blynk
+  15. Temperature compensation
+      o Shift temperature to anticipate based on rate
+      o Filter time constant for rate picked to be 1/10 of observed home constant
+      o Gain picked to produce tempComp that is equal to observed overshoot
+
+  Nomenclature (on Blynk):
+   CALL Call for heat, boolean
+   DMD  Temperature setpoint demanded by web, F
+   HELD Confirmation of web HOLD demand, boolean
+   HOLD Web HOLD demand, boolean
+   HOUR Time being used by this program for troubleshooting, hours
+   HUM  Measured humidity, %
+   OAT  Outside air temperature, F
+   POT  The pot reading converted to degrees demand, F
+   RECO Recovery to warmer schedule on cold day underway, boolean
+   SCHD The time-scheduled setpoint stored in tables, F
+   SET  Temperature setpoint of thermostat, F
+   T    Control law update time, sec
+   TEMP Measured temperature, F
+   TMPC Filtered anticipation temperature, F
+   WEB  The Web temperature demand, F
+
+   On your Blynk app:
+   0.   Connect a green LED or 0-1 500 ms gage to V0 (CALL)
+   1.   Connect a green history graph to V1 (SET)
+   2.   Connect a red history graph (same as 1) to V2 (TEMP)
+   3.   Connect a blue numerical 0-100 8 sec display to V3 (HUM)
+   4i.  Connect a green 50-72 small slider to V4 OUT (DMD)
+   4.   Connect an orange history graph to V4 (TMPC)
+   5.   Connect a white numerical 0-1 500 ms display to V5 (HELD)
+   6.   Connect a white switch to V6 (HOLD)
+   7.   Connect a purple numerical 0-200 5 sec display to V15 (TIME)
+   8.   Connect a purple numerical 0-200 1 sec display to V8 (T)
+   9.   Connect an orange numerical 50-72 1 sec display to V9 (POT)
+   10.  Connect an orange numerical 50-72 1 sec display to V10 (WEB)
+   11.  Connect a green numerical 50-72 1 sec display to V11 (SET)
+   12.  Connect an orange numerical 50-72 10 sec display to V12 (SCHD)
+   13.  Connect a red numerical 30-100 1 sec display to V13 (TEMP)
+   14.  Connect a blue history graph to V16 (CALL)
+   15.  Connect an orange numerical 0-1 5 sec display to V17 (RECO)
+   16.  Connect a blue numerical -50 - 120 30 sec display to V18 (OAT)
+
+   Dependencies:  ADAFRUIT-LED-BACKPACK, SPARKTIME, SPARKINTERVALTIMER, BLYNK,
+   blynk app account, Particle account
 */
-//
-// Requirements:
-// 1.   Read temperature.
-// 2.   Determine setpoint and turn on furnace relay when temperature < setpoint.  Turn off relay when temperature
-//      reaches setpoint.
-// 3.   Read potentiometer POT and set a demand based on the reading.
-// 4.   Read Blynk Web demanded temperature WEB and set a demand based on the reading.
-// 5.   Read Blynk Web over-ride and disable the schedule and web demand functions as long as latched.
-// 6.   Schedule 4 changes in all 7 days of the week.   When time reaches a change
-//      table time instantly change demand to the change table temperature and hold.
-// 7.   Potentiometer is physically present and must always win if it is most recent change of
-//      setpoint.
-// 8.   The Blynk Web is needed to set temperature remotely for some reason and must win over the
-//      schedule but only if demanded so.
-// 9.   Following power loss the functions must return to the exact settings.
-// 10.  Automatically change with daylight savings (this is built into SparkTime as default)
-// 11.  A new device must come alive with CALL off.
-// 12.  Logic should wait 5 seconds before turning furnace on or off, to help those with fat fingers
-//      to correct their keystrokes / sliding.
-// 13.  Logic should not attempt to run more than one function in same pass.
-// 14.  RECO function
-//        o  Shift schedule early depending on OAT
-//        o  No shift for OAT>40 F
-//        o  1 hr shift for OAT<10 F
-//        o  linear in between and extrapolate colder
-//        o  No shift for turning off furnace
-//        o  Boolean indicator on Blynk
-// 15.  Temperature compensation
-//        o  Shift temperature to anticipate based on rate
-//        o  Filter time constant for rate picked to be 1/10 of observed home constant
-//        o  Gain picked to produce tempComp that is equal to observed overshoot
-//
-// Nomenclature:
-// CALL     Call for heat, boolean
-// DMD      Temperature setpoint demanded by web, F
-// HELD     Confirmation of web HOLD demand, boolean
-// HOLD     Web HOLD demand, boolean
-// HOUR     Time being used by this program for troubleshooting, hours
-// HUM      Measured humidity, %
-// OAT      Outside air temperature, F
-// POT      The pot reading converted to degrees demand, F
-// RECO     Recovery to warmer schedule on cold day underway, boolean
-// SCHD     The time-scheduled setpoint stored in tables, F
-// SET      Temperature setpoint of thermostat, F
-// T        Control law update time, sec
-// TEMP     Measured temperature, F
-// TEMPF    Filtered anticipation temperature, F
-// WEB      The Web temperature demand, F
-//
-// On your Blynk app:
-//   0. Connect a green LED or 0-1 500 ms gage to V0 (CALL)
-//   1. Connect a green history graph to V1 (SET)
-//   2. Connect a red history graph (same as 1) to V2 (TEMP)
-//   3. Connect a blue numerical 0-100 8 sec display to V3 (HUM)
-//   4. Connect a green 50-72 small slider to V4 (DMD)
-//   5. Connect a white numerical 0-1 500 ms display to V5 (HELD)
-//   6. Connect a white switch to V6 (HOLD)
-//   7. Connect a purple numerical 0-200 5 sec display to V15 (TIME)
-//   8. Connect a purple numerical 0-200 1 sec display to V8 (T)
-//   9. Connect an orange numerical 50-72 1 sec display to V9 (POT)
-//  10. Connect an orange numerical 50-72 1 sec display to V10 (WEB)
-//  11. Connect a green numerical 50-72 1 sec display to V11 (SET)
-//  12. Connect an orange numerical 50-72 10 sec display to V12 (SCHD)
-//  13. Connect a red numerical 30-100 1 sec display to V13 (TEMP)
-//  14. Connect a blue history graph to V16 (CALL)
-//  15. Connect an orange numerical 0-1 5 sec display to V17 (RECO)
-//  16. Connect a blue numerical -50 - 120 30 sec display to V18 (OAT)
-//
-// Dependencies:  ADAFRUIT-LED-BACKPACK, SPARKTIME, SPARKINTERVALTIMER, BLYNK,
-//                 blynk app account, Particle account
-//
+
+//Sometimes useful for debugging
 //#pragma SPARK_NO_PREPROCESSOR
-#include "application.h"
+//
+// Standard
+#include "application.h"                    // For Particle code classes
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
 //
-// Disable flags if needed
-//#define BARE_PHOTON                         // Run bare photon for testing
-//#define NO_WEATHER_HOOK                     // Turn off webhook weather lookup.  Will get default OAT = 30F
-//#define WEATHER_BUG                         // Turn on bad weather return for debugging
+// Disable flags if needed, usually commented
+//#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
+//#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
+//#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
 //#define NO_PARTICLE                       // Turn off Particle cloud functions.  Interact using Blynk.
 //
-// Usually on
+// Usually defined.   TODO:  either fix the json logic or remove it.    Lots of files.
 #define NO_WEATHER                          // Turn off json weather lookup.  Will get default OAT = 30F
 //
-// Constants
+// Test feature usually commented
+//#define  FAKETIME                         // For simulating rapid time passing of schedule
+//
+// Constants always defined
 #define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
 #define CONTROL_DELAY    1000UL             // Control law wait (1000), ms
 #define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
-#define DIM_DELAY        10000              // LED display timeout to dim, ms
-#define DISPLAY_DELAY    501                // LED display scheduling frame time, ms
+#define DIM_DELAY        3000               // LED display timeout to dim, ms
+#define DISPLAY_DELAY    300                // LED display scheduling frame time, ms
 #ifndef BARE_PHOTON
   #define FILTER_DELAY   10000              // In range of tau/4 - tau/3  * 1000, ms
 #else
   #define FILTER_DELAY   3500               // In range of tau/4 - tau/3  * 1000, ms
 #endif
-//#define  FAKETIME                         // For simulating rapid time passing of schedule
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
 #define HYST        0.5                     // Heat control law hysteresis (0.5), F
 #define POT_PIN     A2                      // Potentiometer input pin on Photon (A2)
@@ -123,6 +129,8 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define NCH         4                       // Number of temp changes in daily sched (4)
 #define ONE_DAY_MILLIS (24 * 60 * 60 * 1000) // Number of milliseconds in one day (24*60*60*1000)
+//
+// Dependent includes.   Easier to debug code if remove unused include files
 #ifndef NO_WEATHER
   #include "openweathermap.h"
   #include "HttpClient.h"
@@ -136,10 +144,8 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #include <math.h>
 #include "adafruit-led-backpack.h"
 #include "pixmaps.h"
-// Test feature to test code on simple Photon.  If you forget to set this and then
-// load onto a bare photon then it will go dark and you'll have to put it into safe mode to reflash.
 #include "myAuth.h"
-/* This file myAutho.h is not in Git repository because it contains personal information.
+/* This file myAuth.h is not in Git repository because it contains personal information.
 Make it yourself.   It should look like this, with your personal authorizations:
 (Note:  you don't need a valid number for one of the blynkAuth if not using it.)
 #ifndef BARE_PHOTON
@@ -161,11 +167,12 @@ enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 #ifndef BARE_PHOTON
-  double              compGain        = 100.;// Temperature compensation gain, deg/(deg/sec)
+  double            compGain        = 100.; // Temperature compensation gain, deg/(deg/sec)
 #else
-  double              compGain        = 20.;  // Temperature compensation gain, deg/(deg/sec)
+  double            compGain        = 20.;  // Temperature compensation gain, deg/(deg/sec)
 #endif
 Mode                controlMode     = POT;  // Present control mode
+static  uint8_t     displayCount    = 0;    // Display frame number to execute
 const   int         EEPROM_ADDR     = 10;   // Flash address
 bool                held            = false;// Web toggled permanent and acknowledged
 String              hmString        = "00:00"; // time, hh:mm
@@ -176,11 +183,11 @@ int                 hum             = 0;    // Relative humidity integer value, 
 #endif
 int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
-unsigned long       lastSync     = millis();// Sync time occassionally
+unsigned long       lastSync     = millis();// Sync time occassionally.   Recommended by Particle.
 const   int         LED             = D7;   // Status LED
 #ifndef BARE_PHOTON
-  Adafruit_8x8matrix  matrix1;                // Tens LED matrix
-  Adafruit_8x8matrix  matrix2;                // Ones LED matrix
+  Adafruit_8x8matrix  matrix1;              // Tens LED matrix
+  Adafruit_8x8matrix  matrix2;              // Ones LED matrix
 #endif
 IntervalTimer       myTimerD;               // To dim display
 IntervalTimer       myTimer7;               // To shift LED pattern for life
@@ -209,7 +216,7 @@ double              updateTime      = 0.0;  // Control law update time, sec
 #ifndef NO_WEATHER_HOOK
   long              updateweatherhour= 0;   // Last hour weather updated
 #endif
-static const int    verbose         = 4;    // Debug, as much as you can tolerate
+static const int    verbose         = 3;    // Debug, as much as you can tolerate
 #ifndef NO_WEATHER
   Weather*            weather;              // To get OAT from openweathermap
 #endif
@@ -232,7 +239,7 @@ static float hourCh[7][NCH] = {
     6, 8, 16, 22    // Sat
 };
 // Temp setting after change in above table.   Change holds until next
-// time trigger.  Over-ridden either by pot or web adjustments.
+// time trigger.  Temporarily over-ridden either by pot or web adjustments.
 static const float tempCh[7][NCH] = {
     68, 62, 68, 62, // Sun
     68, 62, 68, 62, // Mon
@@ -243,10 +250,13 @@ static const float tempCh[7][NCH] = {
     68, 62, 68, 62  // Sat
 };
 
-// Rate filter
+// Rate filter.
+// Exponential chosen for this because it does not suffer from aliasing problems
+// so users not used to tuning digital filters may set tau and T at will.
+// There are some general guidelines for setting those in their comments in this file.
 RateLagExp*  rateFilter;
 
-// Put randomly placed activity pattern on LED display
+// Put randomly placed activity pattern on LED display to preserve life.
 void displayRandom(void)
 {
 #ifndef BARE_PHOTON
@@ -345,7 +355,8 @@ double modelTemperature(bool call, double OAT, double T)
 
 // Save temperature setpoint to flash for next startup.   During power
 // failures the thermostat will reset to the condition it was in before
-// the power failure.
+// the power failure.   Filter initialized to sensed temperature (lose anticipation briefly
+// following recovery from power failure).
 void saveTemperature()
 {
     uint8_t values[4] = { (uint8_t)set, (uint8_t)held, (uint8_t)webDmd, (uint8_t)(roundf(Thouse)) };
@@ -381,7 +392,7 @@ int setSaveDisplayTemp(int t)
     set = t;
     switch(controlMode)
     {
-        case POT:   displayTemperature(set);   break;
+        case POT:   displayTemperature(set); displayCount=0; break;
         case WEB:   break;
         case SCHD:  break;
     }
@@ -480,7 +491,9 @@ double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
 }
 
 #ifndef NO_BLYNK
-// Attach a Slider widget to the Virtual pin 4 in your Blynk app - and control the web desired temperatuer
+// Attach a Slider widget to the Virtual pin 4 IN in your Blynk app
+// - and control the web desired temperature.
+// Note:  there are separate virtual IN and OUT in Blynk.
 BLYNK_WRITE(V4) {
     if (param.asInt() > 0)
     {
@@ -503,6 +516,7 @@ int particleSet(String command)
 
 #ifndef NO_BLYNK
 // Attach a switch widget to the Virtual pin 6 in your Blynk app - and demand continuous web control
+// Note:  there are separate virtual IN and OUT in Blynk.
 BLYNK_WRITE(V6) {
     webHold = param.asInt();
 }
@@ -720,7 +734,6 @@ void loop()
     unsigned long           now = millis();     // Keep track of time
     bool                    control;            // Control sequence, T/F
     bool                    display;            // LED display sequence, T/F
-    static uint8_t          displayCount  = 0;  // Frame number to execute
     bool                    filter;             // Filter for temperature, T/F
     bool                    publishAny;         // Publish, T/F
     bool                    publish1;           // Publish, T/F
@@ -950,34 +963,34 @@ void loop()
     {
       switch ( displayCount++ )
       {
-        case 1:
+        case 0-10:
+          break;      // Hold.  Useful for freezing display after adjusting POT
+        case 11:
           displayMessage("S=");
           break;
-        case 2:
+        case 12:
           displayTemperature(set);
           break;
-        case 4:
+        case 14:
           displayMessage("T=");
           break;
-        case 5:
+        case 15:
           displayTemperature(roundf(temp));
           break;
-        case 7:
+        case 17:
           displayMessage("O=");
           break;
-        case 8:
+        case 18:
           displayTemperature(OAT);
           break;
-        case 10:
+        case 20:
           displayMessage("H=");
           break;
-        case 11:
+        case 21:
           displayTemperature(hum);
           break;
-        case 13:
+        case 23:
           displayRandom();
-          break;
-        case 18:
           displayCount = 0;
           break;
         }
