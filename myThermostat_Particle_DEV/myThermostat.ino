@@ -94,7 +94,7 @@
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
 //
 // Disable flags if needed, usually commented
-#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
+//#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
 //#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
 //#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
@@ -115,7 +115,7 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define DIM_DELAY        3000UL             // LED display timeout to dim, ms
 #define DISPLAY_DELAY    300UL              // LED display scheduling frame time, ms
 #ifndef BARE_PHOTON
-  #define FILTER_DELAY   10000UL            // In range of tau/4 - tau/3  * 1000, ms
+  #define FILTER_DELAY   5000UL             // In range of tau/4 - tau/3  * 1000, ms
 #else
   #define FILTER_DELAY   3500UL             // In range of tau/4 - tau/3  * 1000, ms
 #endif
