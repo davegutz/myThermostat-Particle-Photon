@@ -94,14 +94,13 @@
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
 //
 // Disable flags if needed, usually commented
-//#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
+#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
 //#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
 //#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
 //#define NO_PARTICLE                       // Turn off Particle cloud functions.  Interact using Blynk.
 //
-// Usually defined.   TODO:  either fix the json logic or remove it.    Lots of files.
-#define NO_WEATHER                          // Turn off json weather lookup.  Will get default OAT = 30F
+// Usually defined.
 //
 // Test feature usually commented
 //#define  FAKETIME                         // For simulating rapid time passing of schedule
@@ -113,12 +112,12 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
-#define DIM_DELAY        3000               // LED display timeout to dim, ms
-#define DISPLAY_DELAY    300                // LED display scheduling frame time, ms
+#define DIM_DELAY        3000UL             // LED display timeout to dim, ms
+#define DISPLAY_DELAY    300UL              // LED display scheduling frame time, ms
 #ifndef BARE_PHOTON
-  #define FILTER_DELAY   10000              // In range of tau/4 - tau/3  * 1000, ms
+  #define FILTER_DELAY   10000UL            // In range of tau/4 - tau/3  * 1000, ms
 #else
-  #define FILTER_DELAY   3500               // In range of tau/4 - tau/3  * 1000, ms
+  #define FILTER_DELAY   3500UL             // In range of tau/4 - tau/3  * 1000, ms
 #endif
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
 #define HYST        0.5                     // Heat control law hysteresis (0.5), F
@@ -128,13 +127,9 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define MINSET      50                      // Minimum setpoint allowed (50), F
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define NCH         4                       // Number of temp changes in daily sched (4)
-#define ONE_DAY_MILLIS (24 * 60 * 60 * 1000) // Number of milliseconds in one day (24*60*60*1000)
+#define ONE_DAY_MILLIS (24*60*60*1000)      // Number of milliseconds in one day (24*60*60*1000)
 //
 // Dependent includes.   Easier to debug code if remove unused include files
-#ifndef NO_WEATHER
-  #include "openweathermap.h"
-  #include "HttpClient.h"
-#endif
 #include "SparkIntervalTimer.h"
 #include "SparkTime.h"
 #ifndef NO_BLYNK
@@ -153,13 +148,12 @@ Make it yourself.   It should look like this, with your personal authorizations:
 #else
   const   String      blynkAuth     = "d2140898f7b94373a78XXX158a3403a1"; // Bare photon
 #endif
-const     String      weathAuth     = "796fb85518f8b9eac4ad983XXXb3246c";       // Get OAT
-const 	  int			    location 	    = 1111111;  // id number  List of city ID city.list.json.gz can be downloaded here http://bulk.openweathermap.org/sample/
 */
 #include "myFilters.h"
 
 using namespace std;
 
+// Global variables
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 #ifndef NO_WEATHER_HOOK
   int               badWeatherCall  = 0;    // webhook lookup counter
@@ -178,9 +172,6 @@ bool                held            = false;// Web toggled permanent and acknowl
 String              hmString        = "00:00"; // time, hh:mm
 static double       controlTime     = 0.0;  // Decimal time, hour
 int                 hum             = 0;    // Relative humidity integer value, %
-#ifndef NO_WEATHER
-  HttpClient*       httpClient;             // To get OAT from openweathermap
-#endif
 int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
 unsigned long       lastSync     = millis();// Sync time occassionally.   Recommended by Particle.
@@ -217,9 +208,6 @@ double              updateTime      = 0.0;  // Control law update time, sec
   long              updateweatherhour= 0;   // Last hour weather updated
 #endif
 static const int    verbose         = 3;    // Debug, as much as you can tolerate
-#ifndef NO_WEATHER
-  Weather*            weather;              // To get OAT from openweathermap
-#endif
 #ifndef NO_WEATHER_HOOK
   bool              weatherGood     = false;// webhook OAT lookup successful, T/F
 #endif
@@ -700,11 +688,6 @@ void setup()
   #ifndef NO_WEATHER_HOOK
     Spark.subscribe("hook-response/get_weather", gotWeatherData, MY_DEVICES);
   #endif
-  #ifndef NO_WEATHER
-    httpClient  = new HttpClient();
-    weather     = new Weather(location, httpClient, weathAuth);
-    weather->setFahrenheit();
-  #endif
 
   // Rate filter
   rateFilter  = new RateLagExp(float(FILTER_DELAY)/1000.0, tau, -0.1, 0.1);
@@ -756,13 +739,6 @@ void loop()
     static int              RESET        = 1;   // Dynamic initialization flag, T/F
     static double           tempRate;           // Rate of change of temp, deg F/sec
 
-    #ifdef NO_WEATHER
-      #ifdef NO_WEATHER_HOOK
-      Serial.println("ERROR:   NO_WEATHER_HOOK and NO_WEATHER cannot both be active");
-      Serial.flush();
-      #endif
-    #endif
-
     // Sequencing
     #ifndef NO_BLYNK
       Blynk.run();
@@ -810,18 +786,6 @@ void loop()
 
     checkPot   = !control && !query  && !read && !publishAny;
 
-    #ifndef NO_WEATHER
-    // Get OAT
-      if ( read )
-      {
-        weather_response_t resp = weather->cachedUpdate(verbose);
-        if (verbose>5) Serial.printf("OAT=%f at %ld\n", OAT, resp.gmt);
-        if ( resp.isSuccess )
-        {
-          OAT = resp.temp_now;
-        }
-      }
-    #endif
     #ifndef NO_WEATHER_HOOK
       // Get OAT webhook
       if ( query    )
