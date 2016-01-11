@@ -186,6 +186,7 @@ int                 numTimeouts     = 0;    // Number of Particle.connect() need
 double              OAT             = 30;   // Outside air temperature, F
 int                 potDmd          = 0;    // Pot value, deg F
 int                 potValue        = 62;   // Dial raw value, F
+char                publishString[40];      // For uptime recording
 bool                reco;                   // Indicator of recovering on cold days by shifting schedule
 SparkTime           rtc;                    // Time value
 int                 schdDmd         = 62;   // Sched raw value, F
@@ -1001,6 +1002,13 @@ void loop()
       if (verbose>1) Serial.println(tmpsStr);
       if ( Particle.connected() )
       {
+          unsigned nowSec = now/1000UL;
+          unsigned sec = nowSec%60;
+          unsigned min = (nowSec%3600)/60;
+          unsigned hours = (nowSec%86400)/3600;
+          sprintf(publishString,"%u:%u:%u",hours,min,sec);
+          Spark.publish("Uptime",publishString);
+          Spark.publish("stat", tmpsStr);
           #ifndef NO_BLYNK
             if (publish1)
             {
