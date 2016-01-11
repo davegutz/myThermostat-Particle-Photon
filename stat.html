@@ -1,0 +1,34 @@
+<!DOCTYPE HTML>
+<html>
+<body>
+    <span id="stat"></span><br>
+    
+    <br><br>
+    <button onclick="start()">Connect</button>
+
+    <script type="text/javascript">
+    function start() {
+
+        document.getElementById("stat").innerHTML = "Waiting for data...";
+        var deviceID = "2d0023000f47343432313031";
+        var accessToken = "ff4550e610a3bb9d0f4d6c6489daffe58e6b3817";
+        var eventSource = new EventSource("https://api.spark.io/v1/devices/" + deviceID + "/events/?access_token=" + accessToken);
+
+        eventSource.addEventListener('open', function(e) {
+            console.log("Opened!"); },false);
+
+        eventSource.addEventListener('error', function(e) {
+            console.log("Errored!"); },false);
+
+        eventSource.addEventListener('stat', function(e) {
+            var parsedData = JSON.parse(e.data);
+            var tempSpan = document.getElementById("stat");
+            tempSpan.innerHTML = "ThermoHoward: " + parsedData.coreid + " stat: " + parsedData.data;
+            tempSpan.style.fontSize = "28px";
+            tsSpan.innerHTML = "At timestamp " + parsedData.published_at;
+            tsSpan.style.fontSize = "9px";
+        }, false);
+    }
+    </script>
+</body>
+</html>
