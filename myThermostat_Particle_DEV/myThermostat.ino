@@ -161,7 +161,7 @@ enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 #ifndef BARE_PHOTON
-  double            compGain        = 100.; // Temperature compensation gain, deg/(deg/sec)
+  double            compGain        = 150.; // Temperature compensation gain, deg/(deg/sec)
 #else
   double            compGain        = 20.;  // Temperature compensation gain, deg/(deg/sec)
 #endif
