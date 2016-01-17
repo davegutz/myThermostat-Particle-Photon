@@ -39,7 +39,7 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 //
 // Constants always defined
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
-#define CONTROL_DELAY    1000UL             // Control law wait (1000), ms
+#define CONTROL_DELAY    2000UL             // Control law wait (2000 = 1s), 1/2 ms
 #define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
@@ -91,7 +91,8 @@ int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
 unsigned long       lastSync     = millis();// Sync time occassionally.   Recommended by Particle.
 const   int         LED             = D7;   // Status LED
-IntervalTimer       myTimer7;               // To shift LED pattern for life
+IntervalTimer       myTimerC;               // To drive control logic interrupt
+IntervalTimer       myTimerD;               // To dim display
 int                 numTimeouts     = 0;    // Number of Particle.connect() needed to unfreeze
 double              OAT             = 30;   // Outside air temperature, F
 int                 potDmd          = 0;    // Pot value, deg F
@@ -273,6 +274,44 @@ int particleHold(String command)
 }
 #endif
 
+// Control temp
+void control(void)
+{
+  static unsigned long    lastControl  = 0UL; // Last control law time, ms
+  unsigned long           now = millis();     // Keep track of time
+  updateTime    = float(now - lastControl)/1000.0 + float(numTimeouts)/100.0;
+  lastControl   = now;
+
+  unsigned long           currentTime;        // Time result
+  char  tempStr[8];                           // time, hh:mm
+  controlTime = decimalTime(&currentTime, tempStr);
+  hmString    = String(tempStr);
+
+  bool callRaw;
+  if ( call )
+  {
+      callRaw    = ( (float(set)+float(HYST))  > tempComp);
+  }
+  else
+  {
+      callRaw    = ( (float(set)-float(HYST))  > tempComp );
+  }
+  // 5 update persistence for call change to help those with fat fingers
+  callCount   += max(min((float(callRaw)-callCount),  0.2), -0.2);
+  callCount   =  max(min(callCount,                   1.0),  0.0);
+  call        =  callCount >= 1.0;
+  digitalWrite(HEAT_PIN, call);
+  digitalWrite(LED, call);
+}
+
+// Manage control calls using interrupt for better stability.
+void onTimerCon(void)
+{
+  myTimerC.resetPeriod_SIT(CONTROL_DELAY, hmSec);
+  control();
+}
+
+
 // Setup
 void setup()
 {
@@ -300,6 +339,7 @@ void setup()
   #endif
   loadTemperature();
   myTimerD.begin(onTimerDim, DIM_DELAY, hmSec);
+  myTimerC.begin(onTimerCon, CONTROL_DELAY, hmSec);
 
   // Time schedule convert and check
   for (int day=0; day<7; day++)
@@ -345,9 +385,7 @@ void setup()
 // Loop
 void loop()
 {
-    unsigned long           currentTime;        // Time result
     unsigned long           now = millis();     // Keep track of time
-    bool                    control;            // Control sequence, T/F
     bool                    display;            // LED display sequence, T/F
     bool                    filter;             // Filter for temperature, T/F
     bool                    publishAny;         // Publish, T/F
@@ -358,8 +396,6 @@ void loop()
     bool                    query;              // Query schedule and OAT, T/F
     bool                    read;               // Read, T/F
     bool                    checkPot;            // Display to LED, T/F
-    static double           lastHour     = 0.0; // Past used time value,  hours
-    static unsigned long    lastControl  = 0UL; // Last control law time, ms
     static unsigned long    lastDisplay  = 0UL; // Las display time, ms
     static unsigned long    lastFilter   = 0UL; // Last filter time, ms
     static unsigned long    lastPublish1 = 0UL; // Last publish time, ms
@@ -408,14 +444,6 @@ void loop()
     display   = ((now-lastDisplay) >= DISPLAY_DELAY) && !query;
     if ( display ) lastDisplay    = now;
 
-    unsigned long deltaT = now - lastControl;
-    control = (deltaT >= CONTROL_DELAY) && !display;
-    if ( control  )
-    {
-      updateTime    = float(deltaT)/1000.0 + float(numTimeouts)/100.0;
-      lastControl   = now;
-    }
-
     checkPot   = !control && !query  && !read && !publishAny;
 
     #ifndef NO_WEATHER_HOOK
@@ -462,7 +490,6 @@ void loop()
     {
         tempRate = rateFilter->calculate(temp, RESET);
         if ( verbose > 4) Serial.printf("%f %f %f %f %f %f\n", rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), tempRate );
-//        tempRate = 0.0;
         RESET = 0;
     }
     if ( read ) tempComp  = temp + tempRate*compGain;
@@ -591,35 +618,6 @@ void loop()
           break;
         }
     }
-
-
-    // Control law.   Simple on/off but update time structure ('control' calculation) provided for
-    // dynamic logic when needed
-    if ( control )
-    {
-      if (verbose>4) Serial.printf("Control\n");
-      char  tempStr[8];                           // time, hh:mm
-      controlTime = decimalTime(&currentTime, tempStr);
-      //updateTime  = float(controlTime-lastHour)*3600.0 + float(numTimeouts)/100.0;
-      lastHour    = controlTime;
-      hmString    = String(tempStr);
-      bool callRaw;
-      if ( call )
-      {
-          callRaw    = ( (float(set)+float(HYST))  > tempComp);
-      }
-      else
-      {
-          callRaw    = ( (float(set)-float(HYST))  > tempComp );
-      }
-      // 5 update persistence for call change to help those with fat fingers
-      callCount   += max(min((float(callRaw)-callCount),  0.2), -0.2);
-      callCount   =  max(min(callCount,                   1.0),  0.0);
-      call        =  callCount >= 1.0;
-      digitalWrite(HEAT_PIN, call);
-      digitalWrite(LED, call);
-    }
-
 
     // Publish
     if ( publish1 || publish2 || publish3 || publish4 )
