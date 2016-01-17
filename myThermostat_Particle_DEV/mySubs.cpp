@@ -1,6 +1,6 @@
 #include "application.h"
 #include "mySubs.h"
-#include "pixmaps.h"
+
 
 static int verbose;
 
@@ -237,4 +237,17 @@ double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
     *reco               = tempSchdShift>tempSchd;
     tempSchd            = max(tempSchd, tempSchdShift); // Turn on early but not turn off early
     return tempSchd;
+}
+
+
+// Setup LEDs
+void setupMatrix(Adafruit_8x8matrix m)
+{
+    m.clear();
+    m.writeDisplay();
+    m.setTextSize(1);
+    m.setTextWrap(false);
+    m.setTextColor(LED_ON);
+    m.setRotation(0);
+    m.setCursor(0, 0);
 }

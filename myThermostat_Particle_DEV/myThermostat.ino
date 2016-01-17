@@ -61,8 +61,8 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
   #include "BlynkHandlers.h"
 #endif
 #include <math.h>
-#include "adafruit-led-backpack.h"
-#include "pixmaps.h"
+//#include "adafruit-led-backpack.h"
+//#include "pixmaps.h"
 #include "myAuth.h"
 /* This file myAuth.h is not in Git repository because it contains personal information.
 Make it yourself.   It should look like this, with your personal authorizations:
@@ -263,18 +263,6 @@ int setSaveDisplayTemp(int t)
     }
     saveTemperature();
     return set;
-}
-
-// Setup LEDs
-void setupMatrix(Adafruit_8x8matrix m)
-{
-    m.clear();
-    m.writeDisplay();
-    m.setTextSize(1);
-    m.setTextWrap(false);
-    m.setTextColor(LED_ON);
-    m.setRotation(0);
-    m.setCursor(0, 0);
 }
 
 

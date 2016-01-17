@@ -2,7 +2,8 @@
 #define _MY_SUBS_H
 
 #include "application.h"
-//#include "adafruit-led-backpack.h"
+#include "pixmaps.h"
+#include "adafruit-led-backpack.h"
 #include "SparkIntervalTimer.h"
 #define NCH         4                       // Number of temp changes in daily sched (4)
 #define GMT         -5                      // Enter time different to zulu (does not respect DST)
@@ -63,6 +64,7 @@ void gotWeatherData(const char *name, const char *data);
 double lookupTemp(double tim);
 double modelTemperature(bool call, double OAT, double T);
 double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
+void setupMatrix(Adafruit_8x8matrix m);
 String tryExtractString(String str, const char* start, const char* end);
 
 #endif
