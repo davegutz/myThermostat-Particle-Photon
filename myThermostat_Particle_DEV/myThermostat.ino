@@ -6,9 +6,14 @@
   a Reed relay to control a Triangle Tube Prestige furnace interface (Honeywell
   dial thermostat compatible).
 
+  see README.md for more information
+
   11-Nov-2015   Dave Gutz   Created
+  17-Jan-2016   Dave Gutz   Deleted SparkTime and UDP stuff for stability.
 
   TODO:::::::::::::::::::
+Run Control frame using an interrupt so that control possible even if something
+else hangs.  This must include read of temp/hum sensor too.
 
 */
 
@@ -20,7 +25,7 @@
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
 //
 // Disable flags if needed, usually commented
-//#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
+#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
 //#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
 //#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
@@ -32,7 +37,6 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 //#define  FAKETIME                         // For simulating rapid time passing of schedule
 //
 // Constants always defined
-#define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
 #define CONTROL_DELAY    1000UL             // Control law wait (1000), ms
 #define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
@@ -40,11 +44,6 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
 #define DIM_DELAY        3000UL             // LED display timeout to dim, ms
 #define DISPLAY_DELAY    300UL              // LED display scheduling frame time, ms
-#ifndef BARE_PHOTON
-  #define FILTER_DELAY   5000UL             // In range of tau/4 - tau/3  * 1000, ms
-#else
-  #define FILTER_DELAY   3500UL             // In range of tau/4 - tau/3  * 1000, ms
-#endif
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
 #define HYST        0.5                     // Heat control law hysteresis (0.5), F
 #define POT_PIN     A2                      // Potentiometer input pin on Photon (A2)
@@ -53,6 +52,7 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define MINSET      50                      // Minimum setpoint allowed (50), F
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define ONE_DAY_MILLIS (24*60*60*1000)      // Number of milliseconds in one day (24*60*60*1000)
+#include "mySubs.h"
 //
 // Dependent includes.   Easier to debug code if remove unused include files
 #include "SparkIntervalTimer.h"
@@ -74,15 +74,11 @@ Make it yourself.   It should look like this, with your personal authorizations:
 #endif
 */
 #include "myFilters.h"
-#include "mySubs.h"
 
 using namespace std;
 
 // Global variables
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
-#ifndef NO_WEATHER_HOOK
-  int               badWeatherCall  = 0;    // webhook lookup counter
-#endif
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 #ifndef BARE_PHOTON
@@ -125,16 +121,8 @@ int                 set             = 62;   // Selected sched, F
 #endif
 double              temp          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
-double              tempf         = 30;     // webhook OAT, deg F
-double              Thouse;                 // House bulk temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
-#ifndef NO_WEATHER_HOOK
-  long              updateweatherhour= 0;   // Last hour weather updated
-#endif
 static const int    verbose         = 3;    // Debug, as much as you can tolerate
-#ifndef NO_WEATHER_HOOK
-  bool              weatherGood     = false;// webhook OAT lookup successful, T/F
-#endif
 int                 webDmd          = 62;   // Web sched, F
 bool                webHold         = false;// Web permanence request
 
@@ -230,19 +218,6 @@ void displayMessage(const String str)
     myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
 }
 
-// Simple embedded house model for testing logic
-double modelTemperature(bool call, double OAT, double T)
-{
-    static const    double Chouse     = 1000;   // House thermal mass, BTU/F
-    static const    double Qfurnace   = 40000;  // Furnace output, BTU/hr
-    static const    double Hhouse     = 400;    // House loss, BTU/hr/F
-    double dQ   = float(call)*Qfurnace - Hhouse*(Thouse-OAT);   // BTU/hr
-    double dTdt = dQ/Chouse/3600.0;             // House rate of change, F/sec
-    Thouse      += dTdt*float(FILTER_DELAY)/1000.0;
-    Thouse      = min(max(Thouse, 40), 90);
-    return(Thouse);
-}
-
 // Save temperature setpoint to flash for next startup.   During power
 // failures the thermostat will reset to the condition it was in before
 // the power failure.   Filter initialized to sensed temperature (lose anticipation briefly
@@ -303,42 +278,6 @@ void setupMatrix(Adafruit_8x8matrix m)
 }
 
 
-// Convert time to decimal for easy lookup
-double decimalTime(unsigned long *currentTime, char* tempStr)
-{
-//    *currentTime = rtc.now();
-    Time.zone(GMT);
-    *currentTime = Time.now();
-    #ifndef FAKETIME
-    /*
-        uint8_t dayOfWeek = rtc.dayOfWeek(*currentTime);
-        uint8_t hours     = rtc.hour(*currentTime);
-        uint8_t minutes   = rtc.minute(*currentTime);
-        uint8_t seconds   = rtc.second(*currentTime);
-        */
-        uint8_t dayOfWeek = Time.weekday(*currentTime);
-        uint8_t hours     = Time.hour(*currentTime);
-        uint8_t minutes   = Time.minute(*currentTime);
-        uint8_t seconds   = Time.second(*currentTime);
-    #else
-        // Rapid time passage simulation to test schedule functions
-/*
-        uint8_t dayOfWeek = rtc.minute(*currentTime)*7/6;      // minutes = days
-        uint8_t hours     = rtc.second(*currentTime)*24/60;    // seconds = hours
-        uint8_t minutes   = 0;                                // forget minutes
-        uint8_t seconds   = 0;                                // forget seconds
-        */
-        uint8_t dayOfWeek = Time.weekday(*currentTime)*7/6;// minutes = days
-        uint8_t hours     = Time.hour(*currentTime)*24/60; // seconds = hours
-        uint8_t minutes   = 0; // forget minutes
-        uint8_t seconds   = 0; // forget seconds
-
-    #endif
-    sprintf(tempStr, "%02u:%02u", hours, minutes);
-    return (float(dayOfWeek)*24.0 + float(hours) + float(minutes)/60.0 + \
-                        float(seconds)/3600.0);  // 0-6 days and 0 is Sunday
-}
-
 // Calculate recovery time to heat better on cold days
 double recoveryTime(double OAT)
 {
@@ -393,119 +332,6 @@ int particleHold(String command)
   }
 }
 #endif
-
-#ifndef NO_WEATHER_HOOK
-// Returns any text found between a start and end string inside 'str'
-// example: startfooend  -> returns foo
-String tryExtractString(String str, const char* start, const char* end) {
-  if (str == NULL)
-  {
-    return NULL;
-  }
-  int idx = str.indexOf(start);
-  if (idx < 0)
-  {
-    return NULL;
-  }
-  int endIdx = str.indexOf(end);
-  if (endIdx < 0)
-  {
-    return NULL;
-  }
-  return str.substring(idx + strlen(start), endIdx);
-}
-
-
-// This function will get called when weather data comes in
-void gotWeatherData(const char *name, const char *data) {
-  // Important note!  -- Right now the response comes in 512 byte chunks.
-  //  This code assumes we're getting the response in large chunks, and this
-  //  assumption breaks down if a line happens to be split across response chunks.
-  //
-  // Sample data:
-  //  <location>Minneapolis, Minneapolis-St. Paul International Airport, MN</location>
-  //  <weather>Overcast</weather>
-  //  <temperature_string>26.0 F (-3.3 C)</temperature_string>
-  //  <temp_f>26.0</temp_f>
-
-  String str          = String(data);
-  String locationStr  = tryExtractString(str, "<location>",     "</location>");
-  String weatherStr   = tryExtractString(str, "<weather>",      "</weather>");
-  String tempStr      = tryExtractString(str, "<temp_f>",       "</temp_f>");
-  String windStr      = tryExtractString(str, "<wind_string>",  "</wind_string>");
-
-  if (locationStr != NULL && verbose>3) {
-    if(verbose>3) Serial.println("");
-    Serial.println("At location: " + locationStr);
-  }
-  if (weatherStr != NULL && verbose>3) {
-    Serial.println("The weather is: " + weatherStr);
-  }
-  if (tempStr != NULL) {
-    weatherGood = true;
-    #ifndef TESTING_WEATHER
-      updateweatherhour = Time.hour();  // To check once per hour
-    #endif
-    tempf = atof(tempStr);
-    if (verbose>2)
-    {
-      if (verbose<4) Serial.println("");
-      Serial.println("The temp is: " + tempStr + String(" *F"));
-      Serial.flush();
-      Serial.printf("tempf=%f\n", tempf);
-      Serial.flush();
-    }
-  }
-  if (windStr != NULL && verbose>3) {
-    Serial.println("The wind is: " + windStr);
-  }
-}
-
-//Updates Weather Forecast Data
-void getWeather()
-{
-  // Don't check if same hour
-  if (Time.hour() == updateweatherhour)
-  {
-    if (verbose>2 && weatherGood) Serial.printf("Weather up to date, tempf=%f\n", tempf);
-    return;
-  }
-
-  if (verbose>2)
-  {
-    Serial.print("Requesting Weather from webhook...");
-    Serial.flush();
-  }
-  weatherGood = false;
-  // publish the event that will trigger our webhook
-  Spark.publish("get_weather");
-
-  unsigned long wait = millis();
-  //wait for subscribe to kick in or 0.9 secs
-  while (!weatherGood && (millis() < wait + WEATHER_WAIT))
-  {
-    //Tells the core to check for incoming messages from partile cloud
-    Spark.process();
-    delay(50);
-  }
-  if (!weatherGood)
-  {
-    if (verbose>3) Serial.print("Weather update failed.  ");
-    badWeatherCall++;
-    if (badWeatherCall > 2)
-    {
-      //If 3 webhook calls fail in a row, Print fail
-      if (verbose>0) Serial.println("Webhook Weathercall failed!");
-      badWeatherCall = 0;
-    }
-  }
-  else
-  {
-    badWeatherCall = 0;
-  }
-} //End of getWeather function
-#endif
-
 
 // Setup
 void setup()

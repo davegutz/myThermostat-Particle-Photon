@@ -1,10 +1,22 @@
+#ifndef _MY_SUBS_H
+#define _MY_SUBS_H
+
 #include "application.h"
 //#include "adafruit-led-backpack.h"
 #include "SparkIntervalTimer.h"
 #define NCH         4                       // Number of temp changes in daily sched (4)
 #define GMT         -5                      // Enter time different to zulu (does not respect DST)
 #define DIM_DELAY   3000UL                  // LED display timeout to dim, ms
+#ifndef BARE_PHOTON
+  #define FILTER_DELAY   5000UL             // In range of tau/4 - tau/3  * 1000, ms
+#else
+  #define FILTER_DELAY   3500UL             // In range of tau/4 - tau/3  * 1000, ms
+#endif
+#define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 
+#ifndef NO_WEATHER_HOOK
+  static int                  badWeatherCall  = 0;    // webhook lookup counter
+#endif
 /*
 #ifndef BARE_PHOTON
   static Adafruit_8x8matrix   matrix1;                // Tens LED matrix
@@ -13,6 +25,14 @@
 static bool                   call            = false;// Heat demand to relay control
 static IntervalTimer          myTimerD;               // To dim display
 */
+  static double               tempf         = 30;     // webhook OAT, deg F
+  static double               Thouse;                 // House bulk temp, F
+#ifndef NO_WEATHER_HOOK
+  static long                 updateweatherhour= 0;   // Last hour weather updated
+#endif
+#ifndef NO_WEATHER_HOOK
+  static bool                 weatherGood     = false;// webhook OAT lookup successful, T/F
+#endif
 
 // Time to trigger setting change
 static float hourCh[7][NCH] = {
@@ -36,6 +56,13 @@ static const float tempCh[7][NCH] = {
     68, 62, 68, 62  // Fri
 };
 
+double decimalTime(unsigned long *currentTime, char* tempStr);
 //void displayRandom(void);
+void getWeather(void);
+void gotWeatherData(const char *name, const char *data);
 double lookupTemp(double tim);
+double modelTemperature(bool call, double OAT, double T);
 double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
+String tryExtractString(String str, const char* start, const char* end);
+
+#endif
