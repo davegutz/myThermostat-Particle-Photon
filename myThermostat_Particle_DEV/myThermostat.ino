@@ -266,14 +266,6 @@ int setSaveDisplayTemp(int t)
 }
 
 
-// Calculate recovery time to heat better on cold days
-double recoveryTime(double OAT)
-{
-    double recoTime = (40.0 - OAT)/30.0;
-    recoTime        = max(min(recoTime, 2.0), 0.0);
-    return recoTime;
-}
-
 #ifndef NO_BLYNK
 // Attach a Slider widget to the Virtual pin 4 IN in your Blynk app
 // - and control the web desired temperature.

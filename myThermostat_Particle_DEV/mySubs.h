@@ -63,6 +63,7 @@ void getWeather(void);
 void gotWeatherData(const char *name, const char *data);
 double lookupTemp(double tim);
 double modelTemperature(bool call, double OAT, double T);
+double recoveryTime(double OAT);
 double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
 void setupMatrix(Adafruit_8x8matrix m);
 String tryExtractString(String str, const char* start, const char* end);

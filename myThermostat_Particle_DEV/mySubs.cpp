@@ -56,6 +56,17 @@ void displayRandom(void)
 }
 */
 
+
+// Calculate recovery time to heat better on cold days
+double recoveryTime(double OAT)
+{
+    double recoTime = (40.0 - OAT)/30.0;
+    recoTime        = max(min(recoTime, 2.0), 0.0);
+    return recoTime;
+}
+
+
+
 #ifndef NO_WEATHER_HOOK
 // Returns any text found between a start and end string inside 'str'
 // example: startfooend  -> returns foo
@@ -77,9 +88,10 @@ String tryExtractString(String str, const char* start, const char* end)
   }
   return str.substring(idx + strlen(start), endIdx);
 }
-
+#endif
 
 //Updates Weather Forecast Data
+#ifndef NO_WEATHER_HOOK
 void getWeather()
 {
   // Don't check if same hour
@@ -122,8 +134,10 @@ void getWeather()
     badWeatherCall = 0;
   }
 } //End of getWeather function
+#endif
 
 // This function will get called when weather data comes in
+#ifndef NO_WEATHER_HOOK
 void gotWeatherData(const char *name, const char *data)
 {
   // Important note!  -- Right now the response comes in 512 byte chunks.
@@ -168,8 +182,6 @@ void gotWeatherData(const char *name, const char *data)
     Serial.println("The wind is: " + windStr);
   }
 }
-
-
 #endif
 
 
