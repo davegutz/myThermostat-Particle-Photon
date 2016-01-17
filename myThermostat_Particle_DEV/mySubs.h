@@ -27,6 +27,7 @@
   static Adafruit_8x8matrix   matrix2;                // Ones LED matrix
 #endif
 //static bool                   call            = false;// Heat demand to relay control
+static IntervalTimer          myTimerD;               // To dim display
   static int                  set             = 62;   // Selected sched, F
   static double               tempf         = 30;     // webhook OAT, deg F
   static double               Thouse;                 // House bulk temp, F
