@@ -1,6 +1,6 @@
 #include "application.h"
 #include "mySubs.h"
-
+#include "math.h"
 
 static int verbose;
 
@@ -64,6 +64,7 @@ double recoveryTime(double OAT)
     recoTime        = max(min(recoTime, 2.0), 0.0);
     return recoTime;
 }
+
 
 
 
@@ -230,6 +231,16 @@ double modelTemperature(bool call, double OAT, double T)
     Thouse      += dTdt*float(FILTER_DELAY)/1000.0;
     Thouse      = min(max(Thouse, 40), 90);
     return(Thouse);
+}
+
+// Save temperature setpoint to flash for next startup.   During power
+// failures the thermostat will reset to the condition it was in before
+// the power failure.   Filter initialized to sensed temperature (lose anticipation briefly
+// following recovery from power failure).
+void saveTemperature()
+{
+    uint8_t values[4] = { (uint8_t)set, (uint8_t)held, (uint8_t)webDmd, (uint8_t)(roundf(Thouse)) };
+    EEPROM.put(EEPROM_ADDR, values);
 }
 
 

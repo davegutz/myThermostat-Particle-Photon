@@ -88,8 +88,6 @@ double              callCount;              // Floating point of bool call for c
 #endif
 Mode                controlMode     = POT;  // Present control mode
 static  uint8_t     displayCount    = 0;    // Display frame number to execute
-const   int         EEPROM_ADDR     = 10;   // Flash address
-bool                held            = false;// Web toggled permanent and acknowledged
 String              hmString        = "00:00"; // time, hh:mm
 static double       controlTime     = 0.0;  // Decimal time, hour
 int                 hum             = 0;    // Relative humidity integer value, %
@@ -97,11 +95,6 @@ int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
 unsigned long       lastSync     = millis();// Sync time occassionally.   Recommended by Particle.
 const   int         LED             = D7;   // Status LED
-#ifndef BARE_PHOTON
-  Adafruit_8x8matrix  matrix1;              // Tens LED matrix
-  Adafruit_8x8matrix  matrix2;              // Ones LED matrix
-#endif
-IntervalTimer       myTimerD;               // To dim display
 IntervalTimer       myTimer7;               // To shift LED pattern for life
 int                 numTimeouts     = 0;    // Number of Particle.connect() needed to unfreeze
 double              OAT             = 30;   // Outside air temperature, F
@@ -110,7 +103,6 @@ int                 potValue        = 62;   // Dial raw value, F
 char                publishString[40];      // For uptime recording
 bool                reco;                   // Indicator of recovering on cold days by shifting schedule
 int                 schdDmd         = 62;   // Sched raw value, F
-int                 set             = 62;   // Selected sched, F
 #ifndef NO_PARTICLE
   String            statStr("WAIT...");     // Status string
 #endif
@@ -123,7 +115,6 @@ double              temp          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
 static const int    verbose         = 3;    // Debug, as much as you can tolerate
-int                 webDmd          = 62;   // Web sched, F
 bool                webHold         = false;// Web permanence request
 
 // Schedules
@@ -133,6 +124,8 @@ bool hourChErr = false;
 // so users not used to tuning digital filters may set tau and T at will.
 // There are some general guidelines for setting those in their comments in this file.
 RateLagExp*  rateFilter;
+
+
 
 // Put randomly placed activity pattern on LED display to preserve life.
 void displayRandom(void)
@@ -168,6 +161,7 @@ void onTimerDim(void)
 #endif
 }
 
+
 // Display the temperature setpoint on LED matrices.   All the ways to set temperature
 // are displayed on the matrices.  It's cool to see the web and schedule adjustments change
 // the display briefly.
@@ -193,6 +187,8 @@ void displayTemperature(int temp)
     myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
 }
 
+
+
 // Display the temperature setpoint on LED matrices.   All the ways to set temperature
 // are displayed on the matrices.  It's cool to see the web and schedule adjustments change
 // the display briefly.
@@ -216,16 +212,6 @@ void displayMessage(const String str)
 #endif
     // Reset clock
     myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
-}
-
-// Save temperature setpoint to flash for next startup.   During power
-// failures the thermostat will reset to the condition it was in before
-// the power failure.   Filter initialized to sensed temperature (lose anticipation briefly
-// following recovery from power failure).
-void saveTemperature()
-{
-    uint8_t values[4] = { (uint8_t)set, (uint8_t)held, (uint8_t)webDmd, (uint8_t)(roundf(Thouse)) };
-    EEPROM.put(EEPROM_ADDR, values);
 }
 
 // Setup function to Load the saved settings so can resume after power failure

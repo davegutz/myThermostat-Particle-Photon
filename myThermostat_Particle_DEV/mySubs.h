@@ -18,14 +18,15 @@
 #ifndef NO_WEATHER_HOOK
   static int                  badWeatherCall  = 0;    // webhook lookup counter
 #endif
-/*
+  static const   int          EEPROM_ADDR     = 10;   // Flash address
+  static bool                 held            = false;// Web toggled permanent and acknowledged
 #ifndef BARE_PHOTON
   static Adafruit_8x8matrix   matrix1;                // Tens LED matrix
   static Adafruit_8x8matrix   matrix2;                // Ones LED matrix
 #endif
-static bool                   call            = false;// Heat demand to relay control
+//static bool                   call            = false;// Heat demand to relay control
 static IntervalTimer          myTimerD;               // To dim display
-*/
+  static int                  set             = 62;   // Selected sched, F
   static double               tempf         = 30;     // webhook OAT, deg F
   static double               Thouse;                 // House bulk temp, F
 #ifndef NO_WEATHER_HOOK
@@ -34,6 +35,7 @@ static IntervalTimer          myTimerD;               // To dim display
 #ifndef NO_WEATHER_HOOK
   static bool                 weatherGood     = false;// webhook OAT lookup successful, T/F
 #endif
+  static int                  webDmd          = 62;   // Web sched, F
 
 // Time to trigger setting change
 static float hourCh[7][NCH] = {
@@ -59,11 +61,13 @@ static const float tempCh[7][NCH] = {
 
 double decimalTime(unsigned long *currentTime, char* tempStr);
 //void displayRandom(void);
+//void displayTemperature(int temp);
 void getWeather(void);
 void gotWeatherData(const char *name, const char *data);
 double lookupTemp(double tim);
 double modelTemperature(bool call, double OAT, double T);
 double recoveryTime(double OAT);
+void saveTemperature();
 double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
 void setupMatrix(Adafruit_8x8matrix m);
 String tryExtractString(String str, const char* start, const char* end);
