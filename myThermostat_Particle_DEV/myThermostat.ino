@@ -9,81 +9,7 @@
   11-Nov-2015   Dave Gutz   Created
 
   TODO:::::::::::::::::::
-  - WEATHER_BUG is turned on to illustrate memory leak that occurs when running with
-  WEATHER in openweathermap.  Rapid flashing cyan over time.   Stress test with
-  QUERY_DELAY = 100UL will reveal this quickly.
 
-
-  Requirements:
-  1.  Read temperature.
-  2.  Determine setpoint and turn on furnace relay when temperature < setpoint.  Turn off relay when temperature
-      reaches setpoint.
-  3.  Read potentiometer POT and set a demand based on the reading.
-  4.  Read Blynk Web demanded temperature WEB and set a demand based on the reading.
-  5.  Read Blynk Web over-ride and disable the schedule and web demand functions as long as latched.
-  6.  Schedule 4 changes in all 7 days of the week.   When time reaches a change
-      table time instantly change demand to the change table temperature and hold.
-  7.  Potentiometer is physically present and must always win if it is most recent change of
-      setpoint.
-  8.  The Blynk Web is needed to set temperature remotely for some reason and must win over the
-      schedule but only if demanded so.
-  9.  Following power loss the functions must return to the exact settings.
-  10. Automatically change with daylight savings (this is built into SparkTime as default)
-  11. A new device must come alive with CALL off.
-  12. Logic should wait 5 seconds before turning furnace on or off, to help those with fat fingers
-      to correct their keystrokes / sliding.
-  13. Logic should not attempt to run more than one function in same pass.
-  14. RECO function
-      o Shift schedule early depending on OAT
-      o No shift for OAT>40 F
-      o 1 hr shift for OAT<10 F
-      o linear in between and extrapolate colder
-      o No shift for turning off furnace
-      o Boolean indicator on Blynk
-  15. Temperature compensation
-      o Shift temperature to anticipate based on rate
-      o Filter time constant for rate picked to be 1/10 of observed home constant
-      o Gain picked to produce tempComp that is equal to observed overshoot
-
-  Nomenclature (on Blynk):
-   CALL Call for heat, boolean
-   DMD  Temperature setpoint demanded by web, F
-   HELD Confirmation of web HOLD demand, boolean
-   HOLD Web HOLD demand, boolean
-   HOUR Time being used by this program for troubleshooting, hours
-   HUM  Measured humidity, %
-   OAT  Outside air temperature, F
-   POT  The pot reading converted to degrees demand, F
-   RECO Recovery to warmer schedule on cold day underway, boolean
-   SCHD The time-scheduled setpoint stored in tables, F
-   SET  Temperature setpoint of thermostat, F
-   T    Control law update time, sec
-   TEMP Measured temperature, F
-   TMPC Filtered anticipation temperature, F
-   WEB  The Web temperature demand, F
-
-   On your Blynk app:
-   0.   Connect a green LED or 0-1 500 ms gage to V0 (CALL)
-   1.   Connect a green history graph to V1 (SET)
-   2.   Connect a red history graph (same as 1) to V2 (TEMP)
-   3.   Connect a blue numerical 0-100 8 sec display to V3 (HUM)
-   4i.  Connect a green 50-72 small slider to V4 OUT (DMD)
-   4.   Connect an orange history graph to V4 (TMPC)
-   5.   Connect a white numerical 0-1 500 ms display to V5 (HELD)
-   6.   Connect a white switch to V6 (HOLD)
-   7.   Connect a purple numerical 0-200 5 sec display to V15 (TIME)
-   8.   Connect a purple numerical 0-200 1 sec display to V8 (T)
-   9.   Connect an orange numerical 50-72 1 sec display to V9 (POT)
-   10.  Connect an orange numerical 50-72 1 sec display to V10 (WEB)
-   11.  Connect a green numerical 50-72 1 sec display to V11 (SET)
-   12.  Connect an orange numerical 50-72 10 sec display to V12 (SCHD)
-   13.  Connect a red numerical 30-100 1 sec display to V13 (TEMP)
-   14.  Connect a blue history graph to V16 (CALL)
-   15.  Connect an orange numerical 0-1 5 sec display to V17 (RECO)
-   16.  Connect a blue numerical -50 - 120 30 sec display to V18 (OAT)
-
-   Dependencies:  ADAFRUIT-LED-BACKPACK, SPARKTIME, SPARKINTERVALTIMER, BLYNK,
-   blynk app account, Particle account
 */
 
 //Sometimes useful for debugging
@@ -126,12 +52,10 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define TEMPCAL     -4                      // Calibrate temp sense (0), F
 #define MINSET      50                      // Minimum setpoint allowed (50), F
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
-#define NCH         4                       // Number of temp changes in daily sched (4)
 #define ONE_DAY_MILLIS (24*60*60*1000)      // Number of milliseconds in one day (24*60*60*1000)
 //
 // Dependent includes.   Easier to debug code if remove unused include files
 #include "SparkIntervalTimer.h"
-#include "SparkTime.h"
 #ifndef NO_BLYNK
   #include "blynk.h"
   #include "BlynkHandlers.h"
@@ -150,6 +74,7 @@ Make it yourself.   It should look like this, with your personal authorizations:
 #endif
 */
 #include "myFilters.h"
+#include "mySubs.h"
 
 using namespace std;
 
@@ -188,7 +113,6 @@ int                 potDmd          = 0;    // Pot value, deg F
 int                 potValue        = 62;   // Dial raw value, F
 char                publishString[40];      // For uptime recording
 bool                reco;                   // Indicator of recovering on cold days by shifting schedule
-SparkTime           rtc;                    // Time value
 int                 schdDmd         = 62;   // Sched raw value, F
 int                 set             = 62;   // Selected sched, F
 #ifndef NO_PARTICLE
@@ -203,7 +127,6 @@ double              temp          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              tempf         = 30;     // webhook OAT, deg F
 double              Thouse;                 // House bulk temp, F
-UDP                 UDPClient;              // Time structure
 double              updateTime      = 0.0;  // Control law update time, sec
 #ifndef NO_WEATHER_HOOK
   long              updateweatherhour= 0;   // Last hour weather updated
@@ -217,28 +140,6 @@ bool                webHold         = false;// Web permanence request
 
 // Schedules
 bool hourChErr = false;
-// Time to trigger setting change
-static float hourCh[7][NCH] = {
-    6, 8, 16, 22,   // Sun
-    4, 7, 16, 22,   // Mon
-    4, 7, 16, 22,   // Tue
-    4, 7, 16, 22,   // Wed
-    4, 7, 16, 22,   // Thu
-    4, 7, 16, 22,   // Fri
-    6, 8, 16, 22    // Sat
-};
-// Temp setting after change in above table.   Change holds until next
-// time trigger.  Temporarily over-ridden either by pot or web adjustments.
-static const float tempCh[7][NCH] = {
-    68, 62, 68, 62, // Sun
-    68, 62, 68, 62, // Mon
-    68, 62, 68, 62, // Tue
-    68, 62, 68, 62, // Wed
-    68, 62, 68, 62, // Thu
-    68, 62, 68, 62, // Fri
-    68, 62, 68, 62  // Sat
-};
-
 // Rate filter.
 // Exponential chosen for this because it does not suffer from aliasing problems
 // so users not used to tuning digital filters may set tau and T at will.
@@ -405,53 +306,37 @@ void setupMatrix(Adafruit_8x8matrix m)
 // Convert time to decimal for easy lookup
 double decimalTime(unsigned long *currentTime, char* tempStr)
 {
-    *currentTime = rtc.now();
+//    *currentTime = rtc.now();
+    Time.zone(GMT);
+    *currentTime = Time.now();
     #ifndef FAKETIME
+    /*
         uint8_t dayOfWeek = rtc.dayOfWeek(*currentTime);
         uint8_t hours     = rtc.hour(*currentTime);
         uint8_t minutes   = rtc.minute(*currentTime);
         uint8_t seconds   = rtc.second(*currentTime);
+        */
+        uint8_t dayOfWeek = Time.weekday(*currentTime);
+        uint8_t hours     = Time.hour(*currentTime);
+        uint8_t minutes   = Time.minute(*currentTime);
+        uint8_t seconds   = Time.second(*currentTime);
     #else
         // Rapid time passage simulation to test schedule functions
+/*
         uint8_t dayOfWeek = rtc.minute(*currentTime)*7/6;      // minutes = days
         uint8_t hours     = rtc.second(*currentTime)*24/60;    // seconds = hours
         uint8_t minutes   = 0;                                // forget minutes
         uint8_t seconds   = 0;                                // forget seconds
+        */
+        uint8_t dayOfWeek = Time.weekday(*currentTime)*7/6;// minutes = days
+        uint8_t hours     = Time.hour(*currentTime)*24/60; // seconds = hours
+        uint8_t minutes   = 0; // forget minutes
+        uint8_t seconds   = 0; // forget seconds
+
     #endif
     sprintf(tempStr, "%02u:%02u", hours, minutes);
     return (float(dayOfWeek)*24.0 + float(hours) + float(minutes)/60.0 + \
                         float(seconds)/3600.0);  // 0-6 days and 0 is Sunday
-}
-
-// Lookup temp at time
-double lookupTemp(double tim)
-{
-    // tim is decimal hours in week, 0 = midnight Sunday
-    int day = tim/24;  // Day known apriori
-    int num;
-    if ( ((day==0) & (tim< hourCh[0][0]))   |\
-         ((day==6) & (tim>=hourCh[day][NCH-1])) )
-    {
-        day = 6;
-        num = NCH-1;
-    }
-    else
-    {
-        int i;
-        for (i=0; i<7*NCH; i++)
-        {
-            day = i/NCH;
-            num = i-day*NCH;
-            if ( !(tim>hourCh[day][num]) )
-            {
-                i--;
-                day = i/NCH;
-                num = i-day*NCH;
-                break;
-            }
-        }
-    }
-    return (tempCh[day][num]);
 }
 
 // Calculate recovery time to heat better on cold days
@@ -460,23 +345,6 @@ double recoveryTime(double OAT)
     double recoTime = (40.0 - OAT)/30.0;
     recoTime        = max(min(recoTime, 2.0), 0.0);
     return recoTime;
-}
-
-// Calculate scheduled temperature
-double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
-{
-    // Calculate ecovery and wrap time
-    double hourDecimalShift = hourDecimal + recoTime;
-    if ( hourDecimalShift >7*24 ) hourDecimalShift -= 7*24;
-
-    // Find spot in schedules
-    double tempSchd      = lookupTemp(hourDecimal);
-    double tempSchdShift = lookupTemp(hourDecimalShift);
-    if (verbose>5) Serial.printf("hour=%f, recoTime=%f, tempSchd=%f, tempSchdShift=%f\n",\
-                                            hourDecimal, recoTime, tempSchd, tempSchdShift);
-    *reco               = tempSchdShift>tempSchd;
-    tempSchd            = max(tempSchd, tempSchdShift); // Turn on early but not turn off early
-    return tempSchd;
 }
 
 #ifndef NO_BLYNK
@@ -668,9 +536,6 @@ void setup()
   myTimerD.begin(onTimerDim, DIM_DELAY, hmSec);
 
   // Time schedule convert and check
-  rtc.begin(&UDPClient, "pool.ntp.org");  // Workaround - see particle.io
-  rtc.setTimeZone(-5); // gmt offset
-
   for (int day=0; day<7; day++)
     for (int num=0; num<NCH; num++)
   {
