@@ -23,6 +23,7 @@ else hangs.  This must include read of temp/hum sensor too.
 // Standard
 #include "application.h"                    // For Particle code classes
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
+#include "math.h"
 //
 // Disable flags if needed, usually commented
 #define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
@@ -49,8 +50,6 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define POT_PIN     A2                      // Potentiometer input pin on Photon (A2)
 #define TEMP_SENSOR 0x27                    // Temp sensor bus address (0x27)
 #define TEMPCAL     -4                      // Calibrate temp sense (0), F
-#define MINSET      50                      // Minimum setpoint allowed (50), F
-#define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define ONE_DAY_MILLIS (24*60*60*1000)      // Number of milliseconds in one day (24*60*60*1000)
 #include "mySubs.h"
 //
@@ -60,9 +59,6 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
   #include "blynk.h"
   #include "BlynkHandlers.h"
 #endif
-#include <math.h>
-//#include "adafruit-led-backpack.h"
-//#include "pixmaps.h"
 #include "myAuth.h"
 /* This file myAuth.h is not in Git repository because it contains personal information.
 Make it yourself.   It should look like this, with your personal authorizations:
@@ -115,7 +111,6 @@ double              temp          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
 static const int    verbose         = 3;    // Debug, as much as you can tolerate
-bool                webHold         = false;// Web permanence request
 
 // Schedules
 bool hourChErr = false;
@@ -214,29 +209,6 @@ void displayMessage(const String str)
     myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
 }
 
-// Setup function to Load the saved settings so can resume after power failure
-// or software reflash.  Note:  flash may return nonsense such as for a brand
-// new Photon unit and we'll need some safe (furnace off) default values.
-void loadTemperature()
-{
-    if (verbose>0) Serial.println("Loading and displaying temperature from flash");
-    uint8_t values[4];
-    EEPROM.get(EEPROM_ADDR, values);
-    //
-    set     = values[0];
-    if ( (set     > MAXSET  ) | (set     < MINSET  ) ) set     = MINSET;
-    displayTemperature(set);
-    //
-    webHold = values[1];
-    if ( (webHold >    1    ) | (webHold <    0    ) ) webHold =  0;
-    //
-    webDmd  = (int)values[2];
-    if ( (webDmd  > MAXSET  ) | (webDmd  < MINSET  ) ) webDmd  = MINSET;
-    //
-    Thouse  = values[3];
-    if ( (Thouse  > MAXSET+1) | (Thouse  < MINSET-1) ) Thouse  = (MAXSET+MINSET)/2;
-}
-
 // Process a new temperature setting.   Display and save it.
 int setSaveDisplayTemp(int t)
 {
@@ -263,6 +235,8 @@ BLYNK_WRITE(V4) {
     }
 }
 #endif
+
+
 #ifndef NO_PARTICLE
 int particleSet(String command)
 {

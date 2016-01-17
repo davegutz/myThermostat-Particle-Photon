@@ -13,6 +13,8 @@
 #else
   #define FILTER_DELAY   3500UL             // In range of tau/4 - tau/3  * 1000, ms
 #endif
+#define MINSET      50                      // Minimum setpoint allowed (50), F
+#define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 
 #ifndef NO_WEATHER_HOOK
@@ -36,6 +38,7 @@ static IntervalTimer          myTimerD;               // To dim display
   static bool                 weatherGood     = false;// webhook OAT lookup successful, T/F
 #endif
   static int                  webDmd          = 62;   // Web sched, F
+  static bool                 webHold         = false;// Web permanence request
 
 // Time to trigger setting change
 static float hourCh[7][NCH] = {
@@ -61,9 +64,10 @@ static const float tempCh[7][NCH] = {
 
 double decimalTime(unsigned long *currentTime, char* tempStr);
 //void displayRandom(void);
-//void displayTemperature(int temp);
+void displayTemperature(int temp);
 void getWeather(void);
 void gotWeatherData(const char *name, const char *data);
+void loadTemperature(void);
 double lookupTemp(double tim);
 double modelTemperature(bool call, double OAT, double T);
 double recoveryTime(double OAT);

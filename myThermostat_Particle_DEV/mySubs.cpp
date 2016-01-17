@@ -186,6 +186,29 @@ void gotWeatherData(const char *name, const char *data)
 #endif
 
 
+// Setup function to Load the saved settings so can resume after power failure
+// or software reflash.  Note:  flash may return nonsense such as for a brand
+// new Photon unit and we'll need some safe (furnace off) default values.
+void loadTemperature()
+{
+    if (verbose>0) Serial.println("Loading and displaying temperature from flash");
+    uint8_t values[4];
+    EEPROM.get(EEPROM_ADDR, values);
+    //
+    set     = values[0];
+    if ( (set     > MAXSET  ) | (set     < MINSET  ) ) set     = MINSET;
+    displayTemperature(set);
+    //
+    webHold = values[1];
+    if ( (webHold >    1    ) | (webHold <    0    ) ) webHold =  0;
+    //
+    webDmd  = (int)values[2];
+    if ( (webDmd  > MAXSET  ) | (webDmd  < MINSET  ) ) webDmd  = MINSET;
+    //
+    Thouse  = values[3];
+    if ( (Thouse  > MAXSET+1) | (Thouse  < MINSET-1) ) Thouse  = (MAXSET+MINSET)/2;
+}
+
 
 
 
