@@ -17,28 +17,6 @@
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 
-#ifndef NO_WEATHER_HOOK
-  static int                  badWeatherCall  = 0;    // webhook lookup counter
-#endif
-  static const   int          EEPROM_ADDR     = 10;   // Flash address
-  static bool                 held            = false;// Web toggled permanent and acknowledged
-#ifndef BARE_PHOTON
-  static Adafruit_8x8matrix   matrix1;                // Tens LED matrix
-  static Adafruit_8x8matrix   matrix2;                // Ones LED matrix
-#endif
-//static bool                   call            = false;// Heat demand to relay control
-static IntervalTimer          myTimerD;               // To dim display
-  static int                  set             = 62;   // Selected sched, F
-  static double               tempf         = 30;     // webhook OAT, deg F
-  static double               Thouse;                 // House bulk temp, F
-#ifndef NO_WEATHER_HOOK
-  static long                 updateweatherhour= 0;   // Last hour weather updated
-#endif
-#ifndef NO_WEATHER_HOOK
-  static bool                 weatherGood     = false;// webhook OAT lookup successful, T/F
-#endif
-  static int                  webDmd          = 62;   // Web sched, F
-  static bool                 webHold         = false;// Web permanence request
 
 // Time to trigger setting change
 static float hourCh[7][NCH] = {

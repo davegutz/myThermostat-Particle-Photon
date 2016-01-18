@@ -26,7 +26,7 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #include "math.h"
 //
 // Disable flags if needed, usually commented
-#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
+//#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
 //#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
 //#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
@@ -91,7 +91,7 @@ int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
 unsigned long       lastSync     = millis();// Sync time occassionally.   Recommended by Particle.
 const   int         LED             = D7;   // Status LED
-IntervalTimer       myTimer7;               // To shift LED pattern for life
+IntervalTimer       myTimerD;               // To dim display
 int                 numTimeouts     = 0;    // Number of Particle.connect() needed to unfreeze
 double              OAT             = 30;   // Outside air temperature, F
 int                 potDmd          = 0;    // Pot value, deg F
@@ -110,7 +110,22 @@ int                 schdDmd         = 62;   // Sched raw value, F
 double              temp          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
-static const int    verbose         = 3;    // Debug, as much as you can tolerate
+
+// Externals
+#ifndef BARE_PHOTON
+  Adafruit_8x8matrix   matrix1;             // Tens LED matrix
+  Adafruit_8x8matrix   matrix2;             // Ones LED matrix
+#endif
+extern  bool        held            = false;// Web toggled permanent and acknowledged
+extern  int         verbose         = 2;    // Debug, as much as you can tolerate
+extern  int         set             = 62;   // Selected sched, F
+extern  double      tempf           = 30.0;
+#ifndef NO_WEATHER_HOOK
+  extern long       updateweatherhour= 0;   // Last hour weather updated
+  extern bool       weatherGood   = false;  // webhook OAT lookup successful, T/F
+#endif
+extern  int         webDmd          = 62;   // Web sched, F
+extern bool         webHold         = false;// Web permanence request
 
 // Schedules
 bool hourChErr = false;
@@ -334,7 +349,7 @@ void setup()
     Blynk.begin(blynkAuth.c_str());
   #endif
   #ifndef NO_WEATHER_HOOK
-    if (verbose>0)Serial.print("initializing weather...");
+    if (verbose>0)Serial.print("\n\nInitializing weather...");
     Serial.flush();
     getWeather();
   #endif

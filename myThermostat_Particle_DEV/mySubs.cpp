@@ -2,7 +2,25 @@
 #include "mySubs.h"
 #include "math.h"
 
-static int verbose;
+double                        Thouse;               // House bulk temp, F
+#ifndef NO_WEATHER_HOOK
+  int                         badWeatherCall  = 0;  // webhook lookup counter
+#endif
+const   int                   EEPROM_ADDR     = 10;   // Flash address
+
+
+extern  bool                  held;                 // Web toggled permanent and acknowledged
+extern  int                   set;                  // Selected sched, F
+extern  double                tempf;                // webhook OAT, deg F
+extern  int verbose;
+#ifndef NO_WEATHER_HOOK
+#endif
+#ifndef NO_WEATHER_HOOK
+  extern long                 updateweatherhour;    // Last hour weather updated
+  extern bool                 weatherGood;          // webhook OAT lookup successful, T/F
+#endif
+extern  int                   webDmd;               // Web sched, F
+extern bool                   webHold;              // Web permanence request
 
 // Convert time to decimal for easy lookup
 double decimalTime(unsigned long *currentTime, char* tempStr)
@@ -28,33 +46,6 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
                         float(seconds)/3600.0);  // 0-6 days and 0 is Sunday
 }
 
-
-/*
-// Put randomly placed activity pattern on LED display to preserve life.
-void displayRandom(void)
-{
-#ifndef BARE_PHOTON
-  matrix1.clear();
-  matrix2.clear();
-  if (!call)
-  {
-    matrix1.setCursor(1, 0);
-    matrix1.drawBitmap(0, 0, randomDot(), 8, 8, LED_ON);
-  }
-  else
-  {
-    matrix2.setCursor(1, 0);
-    matrix2.drawBitmap(0, 0, randomPlus(), 8, 8, LED_ON);
-  }
-  matrix1.setBrightness(1);  // 1-15
-  matrix2.setBrightness(1);  // 1-15
-  matrix1.writeDisplay();
-  matrix2.writeDisplay();
-#endif
-  // Reset clock
-  myTimerD.resetPeriod_SIT(DIM_DELAY, hmSec);
-}
-*/
 
 
 // Calculate recovery time to heat better on cold days
