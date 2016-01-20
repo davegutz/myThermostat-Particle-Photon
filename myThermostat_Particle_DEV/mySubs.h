@@ -18,39 +18,17 @@
 #define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 
 
-// Time to trigger setting change
-static float hourCh[7][NCH] = {
-    6, 8, 16, 22,   // Sat
-    6, 8, 16, 22,   // Sun
-    4, 7, 16, 22,   // Mon
-    4, 7, 16, 22,   // Tue
-    4, 7, 16, 22,   // Wed
-    4, 7, 16, 22,   // Thu
-    4, 7, 16, 22    // Fri
-};
-// Temp setting after change in above table.   Change holds until next
-// time trigger.  Temporarily over-ridden either by pot or web adjustments.
-static const float tempCh[7][NCH] = {
-    68, 62, 68, 62, // Sat
-    68, 62, 68, 62, // Sun
-    68, 62, 68, 62, // Mon
-    68, 62, 68, 62, // Tue
-    68, 62, 68, 62, // Wed
-    68, 62, 68, 62, // Thu
-    68, 62, 68, 62  // Fri
-};
-
 double decimalTime(unsigned long *currentTime, char* tempStr);
-//void displayRandom(void);
+void displayRandom(void);
 void displayTemperature(int temp);
 void getWeather(void);
 void gotWeatherData(const char *name, const char *data);
 void loadTemperature(void);
-double lookupTemp(double tim);
+//double lookupTemp(double tim);
 double modelTemperature(bool call, double OAT, double T);
 double recoveryTime(double OAT);
 void saveTemperature();
-double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
+//double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
 void setupMatrix(Adafruit_8x8matrix m);
 String tryExtractString(String str, const char* start, const char* end);
 
