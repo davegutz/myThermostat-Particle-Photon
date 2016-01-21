@@ -39,8 +39,8 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 //
 // Constants always defined
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
-#define CONTROL_DELAY    1000UL             // Control law wait (1000), ms
-#define PUBLISH_DELAY    10000UL            // Time between cloud updates (10000), ms
+#define CONTROL_DELAY    4000UL             // Control law wait (1000), ms
+#define PUBLISH_DELAY    30000UL            // Time between cloud updates (10000), ms
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
 #define DIM_DELAY        3000UL             // LED display timeout to dim, ms
