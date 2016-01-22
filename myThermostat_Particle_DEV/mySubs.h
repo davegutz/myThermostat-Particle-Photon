@@ -17,18 +17,17 @@
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 
-
 double decimalTime(unsigned long *currentTime, char* tempStr);
 void displayRandom(void);
 void displayTemperature(int temp);
 void getWeather(void);
 void gotWeatherData(const char *name, const char *data);
 void loadTemperature(void);
-//double lookupTemp(double tim);
+double lookupTemp(double tim);
 double modelTemperature(bool call, double OAT, double T);
 double recoveryTime(double OAT);
 void saveTemperature();
-//double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
+double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
 void setupMatrix(Adafruit_8x8matrix m);
 String tryExtractString(String str, const char* start, const char* end);
 

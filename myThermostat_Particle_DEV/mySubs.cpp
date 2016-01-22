@@ -203,9 +203,6 @@ void loadTemperature()
     if ( (Thouse  > MAXSET+1) | (Thouse  < MINSET-1) ) Thouse  = (MAXSET+MINSET)/2;
 }
 
-
-
-/*
 // Lookup temp at time
 double lookupTemp(double tim)
 {
@@ -236,7 +233,6 @@ double lookupTemp(double tim)
     }
     return (tempCh[day][num]);
 }
-*/
 
 // Simple embedded house model for testing logic
 double modelTemperature(bool call, double OAT, double T)
@@ -262,7 +258,6 @@ void saveTemperature()
 }
 
 
-/*
 // Calculate scheduled temperature
 double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
 {
@@ -279,7 +274,6 @@ double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
     tempSchd            = max(tempSchd, tempSchdShift); // Turn on early but not turn off early
     return tempSchd;
 }
-*/
 
 // Setup LEDs
 void setupMatrix(Adafruit_8x8matrix m)

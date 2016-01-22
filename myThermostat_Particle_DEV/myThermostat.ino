@@ -43,7 +43,6 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define PUBLISH_DELAY    30000UL            // Time between cloud updates (10000), ms
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
-#define DIM_DELAY        3000UL             // LED display timeout to dim, ms
 #define DISPLAY_DELAY    300UL              // LED display scheduling frame time, ms
 #define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
 #define HYST        0.5                     // Heat control law hysteresis (0.5), F
@@ -80,7 +79,7 @@ enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 #ifndef BARE_PHOTON
-  double            compGain        = 150.; // Temperature compensation gain, deg/(deg/sec)
+  double            compGain        = 400.; // Temperature compensation gain, deg/(deg/sec)
 #else
   double            compGain        = 20.;  // Temperature compensation gain, deg/(deg/sec)
 #endif
@@ -131,7 +130,7 @@ extern bool         webHold         = false;// Web permanence request
 
 // Schedules
 // Time to trigger setting change
-float hourCh[7][NCH] = {
+extern float hourCh[7][NCH] = {
     6, 8, 16, 22,   // Sat
     6, 8, 16, 22,   // Sun
     4, 7, 16, 22,   // Mon
@@ -142,7 +141,7 @@ float hourCh[7][NCH] = {
 };
 // Temp setting after change in above table.   Change holds until next
 // time trigger.  Temporarily over-ridden either by pot or web adjustments.
-const float tempCh[7][NCH] = {
+extern const float tempCh[7][NCH] = {
     68, 62, 68, 62, // Sat
     68, 62, 68, 62, // Sun
     68, 62, 68, 62, // Mon
@@ -664,7 +663,7 @@ void loop()
     if ( publish1 || publish2 || publish3 || publish4 )
     {
       char  tmpsStr[100];
-      sprintf(tmpsStr, "%s--> CALL %d | SET %d | TEMP %7.3f | TEMPC %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | LWEB %d | SCH %d | OAT %4.1f\0", \
+      sprintf(tmpsStr, "|%s|CALL %d | SET %d | TEMP %7.3f | TEMPC %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | WEB %d | SCH %d | OAT %4.1f |\0", \
       hmString.c_str(), call, set, temp, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
@@ -725,53 +724,3 @@ void loop()
     }
     if (verbose>5) Serial.printf("end loop()\n");
 }  // loop
-
-
-// Lookup temp at time
-double lookupTemp(double tim)
-{
-    // tim is decimal hours in week, 0 = midnight Sunday
-    int day = tim/24;  // Day known apriori
-    int num;
-    if ( ((day==0) & (tim< hourCh[0][0]))   |\
-         ((day==6) & (tim>=hourCh[day][NCH-1])) )
-    {
-        day = 6;
-        num = NCH-1;
-    }
-    else
-    {
-        int i;
-        for (i=0; i<7*NCH; i++)
-        {
-            day = i/NCH;
-            num = i-day*NCH;
-            if ( !(tim>hourCh[day][num]) )
-            {
-                i--;
-                day = i/NCH;
-                num = i-day*NCH;
-                break;
-            }
-        }
-    }
-    return (tempCh[day][num]);
-}
-
-
-// Calculate scheduled temperature
-double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
-{
-    // Calculate ecovery and wrap time
-    double hourDecimalShift = hourDecimal + recoTime;
-    if ( hourDecimalShift >7*24 ) hourDecimalShift -= 7*24;
-
-    // Find spot in schedules
-    double tempSchd      = lookupTemp(hourDecimal);
-    double tempSchdShift = lookupTemp(hourDecimalShift);
-    if (verbose>5) Serial.printf("hour=%f, recoTime=%f, tempSchd=%f, tempSchdShift=%f\n",\
-                                            hourDecimal, recoTime, tempSchd, tempSchdShift);
-    *reco               = tempSchdShift>tempSchd;
-    tempSchd            = max(tempSchd, tempSchdShift); // Turn on early but not turn off early
-    return tempSchd;
-}
