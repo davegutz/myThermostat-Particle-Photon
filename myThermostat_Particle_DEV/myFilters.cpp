@@ -94,11 +94,27 @@ double RateLagExp::calculate(double in, int RESET)
   RateLagExp::rateState(in);
   return(rate_);
 }
+double RateLagExp::calculate(double in, int RESET, const double T)
+{
+  if (RESET>0)
+  {
+    lstate_ = in;
+    rstate_ = in;
+  }
+  RateLagExp::rateState(in, T);
+  return(rate_);
+}
 void RateLagExp::rateState(double in)
 {
   rate_    =  max(min(c_*(a_*rstate_ + b_*in - lstate_), max_), min_);
   rstate_  =  in;
   lstate_  += T_*rate_;
+}
+void RateLagExp::rateState(double in, const double T)
+{
+  rate_    =  max(min(c_*(a_*rstate_ + b_*in - lstate_), max_), min_);
+  rstate_  =  in;
+  lstate_  += T*rate_;
 }
 void RateLagExp::assignCoeff(double tau)
 {

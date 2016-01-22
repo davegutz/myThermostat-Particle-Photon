@@ -39,7 +39,8 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 //
 // Constants always defined
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
-#define CONTROL_DELAY    4000UL             // Control law wait (1000), ms
+#define CONTROL_DELAY    4000UL             // Control law wait, ms
+#define MODEL_DELAY      5000UL             // Model wait, ms
 #define PUBLISH_DELAY    30000UL            // Time between cloud updates (10000), ms
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
@@ -81,7 +82,7 @@ double              callCount;              // Floating point of bool call for c
 #ifndef BARE_PHOTON
   double            compGain        = 400.; // Temperature compensation gain, deg/(deg/sec)
 #else
-  double            compGain        = 20.;  // Temperature compensation gain, deg/(deg/sec)
+  double            compGain        = 400.; // Temperature compensation gain, deg/(deg/sec)
 #endif
 Mode                controlMode     = POT;  // Present control mode
 static  uint8_t     displayCount    = 0;    // Display frame number to execute
@@ -106,7 +107,7 @@ int                 schdDmd         = 62;   // Sched raw value, F
 #ifndef BARE_PHOTON
   double            tau           =  20.0;  // Rate filter time constant, sec, ~1/10 observed home time constant
 #else
-  double            tau           = 12.0;   // Rate filter time constant, sec, ~1/10 observed home time constant
+  double            tau           =  20.0;  // Rate filter time constant, sec, ~1/10 observed home time constant
 #endif
 double              temp          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
@@ -118,7 +119,7 @@ double              updateTime      = 0.0;  // Control law update time, sec
   Adafruit_8x8matrix   matrix2;             // Ones LED matrix
 #endif
 extern  bool        held            = false;// Web toggled permanent and acknowledged
-extern  int         verbose         = 2;    // Debug, as much as you can tolerate
+extern  int         verbose         = 3;    // Debug, as much as you can tolerate
 extern  int         set             = 62;   // Selected sched, F
 extern  double      tempf           = 30.0;
 #ifndef NO_WEATHER_HOOK
@@ -388,6 +389,7 @@ void loop()
     bool                    control;            // Control sequence, T/F
     bool                    display;            // LED display sequence, T/F
     bool                    filter;             // Filter for temperature, T/F
+    bool                    model;              // Run model, T/F
     bool                    publishAny;         // Publish, T/F
     bool                    publish1;           // Publish, T/F
     bool                    publish2;           // Publish, T/F
@@ -400,6 +402,7 @@ void loop()
     static unsigned long    lastControl  = 0UL; // Last control law time, ms
     static unsigned long    lastDisplay  = 0UL; // Las display time, ms
     static unsigned long    lastFilter   = 0UL; // Last filter time, ms
+    static unsigned long    lastModel    = 0UL; // Las model time, ms
     static unsigned long    lastPublish1 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish2 = 0UL; // Last publish time, ms
     static unsigned long    lastPublish3 = 0UL; // Last publish time, ms
@@ -408,6 +411,8 @@ void loop()
     static unsigned long    lastRead     = 0UL; // Last read time, ms
     static int              RESET        = 1;   // Dynamic initialization flag, T/F
     static double           tempRate;           // Rate of change of temp, deg F/sec
+    static double           tFilter;            // Modeled temp, F
+    static double           tModel;             // Modeled temp, F
 
     // Sequencing
     #ifndef NO_BLYNK
@@ -421,7 +426,19 @@ void loop()
     }
 
     filter    = ((now-lastFilter)>=FILTER_DELAY) || RESET>0;
-    if ( filter )   lastFilter    = now;
+    if ( filter )
+    {
+      tFilter     = float(now-lastFilter)/1000.0;
+      if ( verbose > 3 ) Serial.printf("Filter update=%7.3f\n", tFilter);
+      lastFilter    = now;
+    }
+
+    model     = ((now-lastModel)>=MODEL_DELAY) || RESET>0;
+    if ( model )
+    {
+      if ( verbose > 3 ) Serial.printf("Model update=%7.3f\n", float(now-lastModel)/1000.0);
+      lastModel    = now;
+    }
 
     publish1  = ((now-lastPublish1) >= PUBLISH_DELAY*4);
     if ( publish1 ) lastPublish1  = now;
@@ -437,7 +454,7 @@ void loop()
 
     publishAny  = publish1 || publish2 || publish3 || publish4;
 
-    read    = ((now-lastRead) >= READ_DELAY) && !publishAny;
+    read    = ((now-lastRead) >= READ_DELAY || RESET>0) && !publishAny;
     if ( read     ) lastRead      = now;
 
     query   = ((now-lastQuery)>= QUERY_DELAY) && !read;
@@ -475,6 +492,7 @@ void loop()
     // Read sensors
     if ( read )
     {
+        if ( verbose>4 ) Serial.printf("READ\n");
         #ifndef BARE_PHOTON
           Wire.beginTransmission(TEMP_SENSOR);
           Wire.endTransmission();
@@ -493,15 +511,23 @@ void loop()
           temp        = (float(rawTemp)*165.0/16383.0 - 40.0)*1.8 + 32.0 + TEMPCAL; // convert to fahrenheit and calibrate
         #else
           delay(41); // Usual U2C_time
-          temp    = modelTemperature(call, OAT, READ_DELAY/1000);
+          temp    = tModel;
+          if ( RESET>0 ) temp = NOMSET;
         #endif
+    }
+    if ( model )
+    {
+      if ( verbose>4 ) Serial.printf("MODEL\n");
+      tModel = modelTemperature(temp, RESET, call, OAT, MODEL_DELAY/1000);
+      if ( verbose > 4) Serial.printf("temp=%f, RESET=%d\n", temp, RESET);
     }
     if ( filter )
     {
-        tempRate = rateFilter->calculate(temp, RESET);
-        if ( verbose > 4) Serial.printf("%f %f %f %f %f %f\n", rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), tempRate );
+      if ( verbose>4 ) Serial.printf("FILTER\n");
+      tempRate = rateFilter->calculate(temp, RESET, tFilter);
+      if ( verbose > 4) Serial.printf("temp=%f, RESET=%d, tFilter=%f a=%f b=%f c=%f rstate=%f lstate=%f rate=%f\n", temp, RESET, tFilter, rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), tempRate );
 //        tempRate = 0.0;
-        RESET = 0;
+      RESET = 0;
     }
     if ( read ) tempComp  = temp + tempRate*compGain;
 
@@ -662,9 +688,9 @@ void loop()
     // Publish
     if ( publish1 || publish2 || publish3 || publish4 )
     {
-      char  tmpsStr[100];
-      sprintf(tmpsStr, "|%s|CALL %d | SET %d | TEMP %7.3f | TEMPC %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | WEB %d | SCH %d | OAT %4.1f |\0", \
-      hmString.c_str(), call, set, temp, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT);
+      char  tmpsStr[140];
+      sprintf(tmpsStr, "|%s|CALL %d | SET %d | TEMP %7.3f | TEMPC %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | WEB %d | SCH %d | OAT %4.1f | TMOD %7.3f |\0", \
+      hmString.c_str(), call, set, temp, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, tModel);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
       #endif
@@ -709,9 +735,10 @@ void loop()
               if (verbose>4) Serial.printf("Blynk write4\n");
               Blynk.virtualWrite(V14, I2C_Status);
               Blynk.virtualWrite(V15, hmString);
-              Blynk.virtualWrite(V16, callCount*3+MAXSET);
+              Blynk.virtualWrite(V16, callCount*3+68);
               Blynk.virtualWrite(V17, reco);
               Blynk.virtualWrite(V18, OAT);
+              Blynk.virtualWrite(V19, tModel);
             }
           #endif
         }

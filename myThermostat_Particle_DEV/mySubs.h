@@ -11,9 +11,10 @@
 #ifndef BARE_PHOTON
   #define FILTER_DELAY   5000UL             // In range of tau/4 - tau/3  * 1000, ms
 #else
-  #define FILTER_DELAY   3500UL             // In range of tau/4 - tau/3  * 1000, ms
+  #define FILTER_DELAY   5000UL             // In range of tau/4 - tau/3  * 1000, ms
 #endif
 #define MINSET      50                      // Minimum setpoint allowed (50), F
+#define NOMSET      68                      // Nominal setpoint for modeling etc, F
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
 #define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
 
@@ -24,7 +25,7 @@ void getWeather(void);
 void gotWeatherData(const char *name, const char *data);
 void loadTemperature(void);
 double lookupTemp(double tim);
-double modelTemperature(bool call, double OAT, double T);
+double modelTemperature(double temp, int RESET, bool call, double OAT, double T);
 double recoveryTime(double OAT);
 void saveTemperature();
 double scheduledTemp(double hourDecimal, double recoTime, bool *reco);

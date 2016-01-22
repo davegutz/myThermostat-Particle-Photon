@@ -51,7 +51,7 @@ protected:
 };
 
 
-// Exponential rate-lag rate calculator for fixed update rate
+// Exponential rate-lag rate calculator
 class RateLagExp: public DiscreteFilter
 {
 public:
@@ -62,8 +62,10 @@ public:
   //operators
   //functions
   virtual double  calculate(double in, int RESET);
+  virtual double  calculate(double in, int RESET, const double T);
   virtual void    assignCoeff(double tau);
   virtual void    rateState(double in);
+  virtual void    rateState(double in, const double T);
   virtual double  state(void);
   double a(){return(a_);};
   double b(){return(b_);};
