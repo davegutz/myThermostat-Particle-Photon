@@ -119,7 +119,7 @@ double              updateTime      = 0.0;  // Control law update time, sec
   Adafruit_8x8matrix   matrix2;             // Ones LED matrix
 #endif
 extern  bool        held            = false;// Web toggled permanent and acknowledged
-extern  int         verbose         = 3;    // Debug, as much as you can tolerate
+extern  int         verbose         = 4;    // Debug, as much as you can tolerate
 extern  int         set             = 62;   // Selected sched, F
 extern  double      tempf           = 30.0;
 #ifndef NO_WEATHER_HOOK
@@ -132,24 +132,24 @@ extern bool         webHold         = false;// Web permanence request
 // Schedules
 // Time to trigger setting change
 extern float hourCh[7][NCH] = {
-    6, 8, 16, 22,   // Sat
     6, 8, 16, 22,   // Sun
     4, 7, 16, 22,   // Mon
     4, 7, 16, 22,   // Tue
     4, 7, 16, 22,   // Wed
     4, 7, 16, 22,   // Thu
-    4, 7, 16, 22    // Fri
+    4, 7, 16, 22,   // Fri
+    6, 8, 16, 22    // Sat
 };
 // Temp setting after change in above table.   Change holds until next
 // time trigger.  Temporarily over-ridden either by pot or web adjustments.
 extern const float tempCh[7][NCH] = {
-    68, 62, 68, 62, // Sat
     68, 62, 68, 62, // Sun
     68, 62, 68, 62, // Mon
     68, 62, 68, 62, // Tue
     68, 62, 68, 62, // Wed
     68, 62, 68, 62, // Thu
-    68, 62, 68, 62  // Fri
+    68, 62, 68, 62, // Fri
+    68, 62, 68, 62  // Sat
 };
 
 bool hourChErr = false;

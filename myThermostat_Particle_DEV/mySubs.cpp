@@ -32,13 +32,14 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
     Time.zone(GMT);
     *currentTime = Time.now();
     #ifndef FAKETIME
-        uint8_t dayOfWeek = Time.weekday(*currentTime);
+        uint8_t dayOfWeek = Time.weekday(*currentTime)-1;  // 0-6
         uint8_t hours     = Time.hour(*currentTime);
         uint8_t minutes   = Time.minute(*currentTime);
         uint8_t seconds   = Time.second(*currentTime);
+        if (verbose>3) Serial.printf("DAY %u HOURS %u\n", dayOfWeek, hours);
     #else
         // Rapid time passage simulation to test schedule functions
-        uint8_t dayOfWeek = Time.weekday(*currentTime)*7/6;// minutes = days
+        uint8_t dayOfWeek = (Time.weekday(*currentTime)-1)*7/6;// minutes = days
         uint8_t hours     = Time.hour(*currentTime)*24/60; // seconds = hours
         uint8_t minutes   = 0; // forget minutes
         uint8_t seconds   = 0; // forget seconds
@@ -315,7 +316,7 @@ double scheduledTemp(double hourDecimal, double recoTime, bool *reco)
     // Find spot in schedules
     double tempSchd      = lookupTemp(hourDecimal);
     double tempSchdShift = lookupTemp(hourDecimalShift);
-    if (verbose>5) Serial.printf("hour=%f, recoTime=%f, tempSchd=%f, tempSchdShift=%f\n",\
+    if (verbose>3) Serial.printf("hour=%f, recoTime=%f, tempSchd=%f, tempSchdShift=%f\n",\
                                             hourDecimal, recoTime, tempSchd, tempSchdShift);
     *reco               = tempSchdShift>tempSchd;
     tempSchd            = max(tempSchd, tempSchdShift); // Turn on early but not turn off early
