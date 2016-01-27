@@ -26,7 +26,7 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #include "math.h"
 //
 // Disable flags if needed, usually commented
-//#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
+#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
 //#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
 //#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
@@ -79,11 +79,6 @@ using namespace std;
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
-#ifndef BARE_PHOTON
-  double            compGain        = 400.; // Temperature compensation gain, deg/(deg/sec)
-#else
-  double            compGain        = 400.; // Temperature compensation gain, deg/(deg/sec)
-#endif
 Mode                controlMode     = POT;  // Present control mode
 static  uint8_t     displayCount    = 0;    // Display frame number to execute
 String              hmString        = "00:00"; // time, hh:mm
@@ -104,11 +99,7 @@ int                 schdDmd         = 62;   // Sched raw value, F
 #ifndef NO_PARTICLE
   String            statStr("WAIT...");     // Status string
 #endif
-#ifndef BARE_PHOTON
-  double            tau           =  20.0;  // Rate filter time constant, sec, ~1/10 observed home time constant
-#else
-  double            tau           =  20.0;  // Rate filter time constant, sec, ~1/10 observed home time constant
-#endif
+const  double       tau           = 40.0;   // Rate filter time constant, sec, ~1/5 observed home time constant
 double              temp          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
@@ -121,6 +112,7 @@ double              updateTime      = 0.0;  // Control law update time, sec
 extern  bool        held            = false;// Web toggled permanent and acknowledged
 extern  int         verbose         = 4;    // Debug, as much as you can tolerate
 extern  int         set             = 62;   // Selected sched, F
+extern  double      Ta_Obs          = 62;   // Modeled air temp, F
 extern  double      tempf           = 30.0;
 #ifndef NO_WEATHER_HOOK
   extern long       updateweatherhour= 0;   // Last hour weather updated
@@ -398,6 +390,12 @@ void loop()
     bool                    query;              // Query schedule and OAT, T/F
     bool                    read;               // Read, T/F
     bool                    checkPot;            // Display to LED, T/F
+    const  double           Kd           = 800; // Rate gain, F/(F/sec)
+    const  double           Kei          = 2e-5;// Correction integral gain, (F/sec)/F
+    const  double           Kep          = 4;   // Correction proportional gain, F/F
+    const  double           Kf           = 1;   // Observer gain, F/(F/sec)
+    const  double           Ki           = 1e-5;// Observer integral gain, (duty/sec)/F
+    const  double           Kp           = 2;   // Observer proportional gain, (duty/sec)/F
     static double           lastHour     = 0.0; // Past used time value,  hours
     static unsigned long    lastControl  = 0UL; // Last control law time, ms
     static unsigned long    lastDisplay  = 0UL; // Las display time, ms
@@ -410,7 +408,8 @@ void loop()
     static unsigned long    lastQuery    = 0UL; // Last read time, ms
     static unsigned long    lastRead     = 0UL; // Last read time, ms
     static int              RESET        = 1;   // Dynamic initialization flag, T/F
-    static double           tempRate;           // Rate of change of temp, deg F/sec
+    double                  TaRat_Obs;          // Modeled rate of change of temp, F/sec
+    static double           TaRat_sense;        // Rate of change of temp, F/sec
     static double           tFilter;            // Modeled temp, F
     static double           tModel;             // Modeled temp, F
 
@@ -518,18 +517,17 @@ void loop()
     if ( model )
     {
       if ( verbose>4 ) Serial.printf("MODEL\n");
-      tModel = modelTemperature(temp, RESET, call, OAT, MODEL_DELAY/1000);
+      TaRat_Obs = houseEmbeddedModel(temp, RESET, (double)call, OAT, MODEL_DELAY/1000);
       if ( verbose > 4) Serial.printf("temp=%f, RESET=%d\n", temp, RESET);
     }
     if ( filter )
     {
       if ( verbose>4 ) Serial.printf("FILTER\n");
-      tempRate = rateFilter->calculate(temp, RESET, tFilter);
-      if ( verbose > 4) Serial.printf("temp=%f, RESET=%d, tFilter=%f a=%f b=%f c=%f rstate=%f lstate=%f rate=%f\n", temp, RESET, tFilter, rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), tempRate );
-//        tempRate = 0.0;
+      TaRat_sense = rateFilter->calculate(temp, RESET, tFilter);
+      if ( verbose > 4) Serial.printf("temp=%f, RESET=%d, tFilter=%f a=%f b=%f c=%f rstate=%f lstate=%f rate=%f\n", temp, RESET, tFilter, rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), TaRat_sense );
       RESET = 0;
     }
-    if ( read ) tempComp  = temp + tempRate*compGain;
+    if ( read ) tempComp  = temp + TaRat_sense*Kd;
 
     // Interrogate pot; run fast for good tactile feedback
     // my pot puts out 2872 - 4088 observed using following

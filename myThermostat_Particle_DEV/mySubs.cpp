@@ -11,7 +11,7 @@ const   int                   EEPROM_ADDR     = 1;  // Flash address
 extern  bool                  held;                 // Web toggled permanent and acknowledged
 extern  int                   set;                  // Selected sched, F
 extern  double                tempf;                // webhook OAT, deg F
-static  double                Thouse;               // House bulk temp, F
+extern  double                Ta_Obs;               // Modeled air temp, F
 extern  int verbose;
 #ifndef NO_WEATHER_HOOK
 #endif
@@ -201,12 +201,12 @@ void loadTemperature()
     if ( (webDmd  > MAXSET  ) | (webDmd  < MINSET  ) ) webDmd  = MINSET;
     //
     #ifndef BARE_PHOTON
-    Thouse  = values[3];
+    Ta_Obs  = values[3];
 
     #else
-    Thouse  = 68;
+    Ta_Obs  = 68;
     #endif
-    if ( (Thouse  > MAXSET+1) | (Thouse  < MINSET-1) ) Thouse  = (MAXSET+MINSET)/2;
+    if ( (Ta_Obs  > MAXSET+1) | (Ta_Obs  < MINSET-1) ) Ta_Obs  = (MAXSET+MINSET)/2;
 }
 
 // Lookup temp at time
@@ -241,18 +241,8 @@ double lookupTemp(double tim)
 }
 
 // Simple embedded house model for testing logic
-double modelTemperature(double temp, int RESET, bool call, double OAT, double T)
+double houseEmbeddedModel(const double temp, const int RESET, const double duty, const double OAT, const double T)
 {
-  /*
-    static const    double Chouse     = 1000;   // House thermal mass, BTU/F
-    static const    double Qfurnace   = 40000;  // Furnace output, BTU/hr
-    static const    double Hhouse     = 400;    // House loss, BTU/hr/F
-    double dQ   = float(call)*Qfurnace - Hhouse*(Thouse-OAT);   // BTU/hr
-    double dTdt = dQ/Chouse/3600.0;             // House rate of change, F/sec
-    Thouse      += dTdt*float(FILTER_DELAY)/1000.0;
-    Thouse      = min(max(Thouse, 40), 90);
-    return(Thouse);
-*/
     // Three-state thermal model
 
     // The boiler in the house this was tuned to has a water reset schedule
@@ -262,37 +252,34 @@ double modelTemperature(double temp, int RESET, bool call, double OAT, double T)
     const double Rx   = 69;     // High boiler reset curve OAT break, F
     const double Tn   = 180;    // Low boiler reset curve setpoint break, F
     const double Tx   = 120;    // High boiler reset curve setpoint break, F
-    double Tf   = max(min((OAT-Rn)/(Rx-Rn)*(Tx-Tn)+Tn, Tn), Tx);
+    double Tb   = max(min((OAT-Rn)/(Rx-Rn)*(Tx-Tn)+Tn, Tn), Tx); // Curve interpolation
 
     // Constants tuned to my house.  86400 is number of seconds in day
-    const double Hc   = 119./86400;    // Core to air constant, BTU/sec/F
-    const double Ha   = 0.96/86400;   // Air to wall constant, BTU/sec/F
-    const double Hf   = 1.20/86400;    // Firing constant, BTU/sec/F
-    const double Ho   = 200./86400;    // Cooling constant, BTU/sec/F
+    const double Hc   = 114./86400;   // Core to air constant, BTU/sec/F
+    const double Ha   = 1.61/86400;   // Air to wall constant, BTU/sec/F
+    const double Hf   = 1.75/86400;   // Firing constant, BTU/sec/F
+    const double Ho   = 283./86400;   // Wall to outside constant, BTU/sec/F
 
     // States
-    static double Tw  = OAT;    // Outside wall temp, F
-    if ( RESET>0 ) Thouse = temp; // Air temp in house, F
-    static double Tc  = Thouse; // Core heater temp, F
+    if ( RESET>0 ) Ta_Obs = temp; // Air temp in house, F
+    static double Tw  = (OAT*Ho+Ta_Obs*Ha)/(Ho+Ha);   // Outside wall temp, F
+    static double Tc  = (Ta_Obs*(Ha+Hc)-Tw*Ha)/Hc;    // Core heater temp, F
 
     // Derivatives
-    double dTw_dt   = -(Tw-Thouse)*Ha - (Tw-OAT)*Ho;
-    double dTa_dt   = -(Thouse-Tw)*Ha - (Thouse-Tc)*Hc;
-    double dTc_dt   = -(Tc-Thouse)*Hc + call*Tf*Hf;
+    double dTw_dt   = -(Tw-Ta_Obs)*Ha - (Tw-OAT)*Ho;
+    double dTa_dt   = -(Ta_Obs-Tw)*Ha - (Ta_Obs-Tc)*Hc;
+    double dTc_dt   = -(Tc-Ta_Obs)*Hc + duty*(Tb-Tc)*Hf;
 
     if ( verbose > 2 )
     {
       Serial.printf("model:  dTw_dt=%7.3f, dTa_dt=%7.3f, dTc_dt=%7.3f\n", dTw_dt, dTa_dt, dTc_dt);
-      Serial.printf("model:  Tf=%7.3f, Tc=%7.3f, Thouse=%7.3f, Tw=%7.3f, OAT=%7.3f\n", Tf, Tc, Thouse, Tw, OAT);
+      Serial.printf("model:  Tb=%7.3f, Tc=%7.3f, Ta=%7.3f, Tw=%7.3f, OAT=%7.3f\n", Tb, Tc, Ta_Obs, Tw, OAT);
     }
-    // Integration
-    Tw      += dTw_dt*T;
-    Tw      = min(max(Tw,     -40), 120);
-    Thouse  += dTa_dt*T;
-    Thouse  = min(max(Thouse, -40), 120);
-    Tc      += dTc_dt*T;
-    Tc      = min(max(Tc,     -40), 120);
-    return Thouse;
+    // Integration (Euler Backward Difference)
+    Tw      = min(max(Tw+dTw_dt*T,      -40), 120);
+    Ta_Obs  = min(max(Ta_Obs+dTa_dt*T,  -40), 120);
+    Tc      = min(max(Tc+dTc_dt*T,      -40), 120);
+    return dTa_dt;
 }
 
 // Save temperature setpoint to flash for next startup.   During power
@@ -301,7 +288,7 @@ double modelTemperature(double temp, int RESET, bool call, double OAT, double T)
 // following recovery from power failure).
 void saveTemperature()
 {
-    uint8_t values[4] = { (uint8_t)set, (uint8_t)held, (uint8_t)webDmd, (uint8_t)(roundf(Thouse)) };
+    uint8_t values[4] = { (uint8_t)set, (uint8_t)held, (uint8_t)webDmd, (uint8_t)(roundf(Ta_Obs)) };
     EEPROM.put(EEPROM_ADDR, values);
 }
 
