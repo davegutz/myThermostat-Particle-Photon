@@ -255,6 +255,7 @@ double houseEmbeddedModel(const double temp, const int RESET, const double duty,
     double Tb   = max(min((OAT-Rn)/(Rx-Rn)*(Tx-Tn)+Tn, Tn), Tx); // Curve interpolation
 
     // Constants tuned to my house.  86400 is number of seconds in day
+    // See file "thermo20160123.xlsx" in documentation.
     const double Hc   = 114./86400;   // Core to air constant, BTU/sec/F
     const double Ha   = 1.61/86400;   // Air to wall constant, BTU/sec/F
     const double Hf   = 1.75/86400;   // Firing constant, BTU/sec/F

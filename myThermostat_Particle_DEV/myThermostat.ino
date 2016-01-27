@@ -26,7 +26,7 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #include "math.h"
 //
 // Disable flags if needed, usually commented
-#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
+//#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
 //#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
 //#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
@@ -52,8 +52,10 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define TEMPCAL     -4                      // Calibrate temp sense (0), F
 #define ONE_DAY_MILLIS (24*60*60*1000)      // Number of milliseconds in one day (24*60*60*1000)
 #include "mySubs.h"
-double lookupTemp(double tim);
-double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
+//double lookupTemp(double tim);
+//double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
+double  houseControl(const bool RESET, const double set, const double duty, const double Ta_Sense,\
+   const double Ta_Obs, const double TaRat_Sense, const double TaRat_Obs, const double T);
 //
 // Dependent includes.   Easier to debug code if remove unused include files
 #include "SparkIntervalTimer.h"
@@ -100,7 +102,7 @@ int                 schdDmd         = 62;   // Sched raw value, F
   String            statStr("WAIT...");     // Status string
 #endif
 const  double       tau           = 40.0;   // Rate filter time constant, sec, ~1/5 observed home time constant
-double              temp          = 65.0;   // Sensed temp, F
+double              Ta_Sense          = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
 
@@ -390,7 +392,7 @@ void loop()
     bool                    query;              // Query schedule and OAT, T/F
     bool                    read;               // Read, T/F
     bool                    checkPot;            // Display to LED, T/F
-    const  double           Kd           = 800; // Rate gain, F/(F/sec)
+    const  double           Kv           = 800; // Rate gain, F/(F/sec)
     const  double           Kei          = 2e-5;// Correction integral gain, (F/sec)/F
     const  double           Kep          = 4;   // Correction proportional gain, F/F
     const  double           Kf           = 1;   // Observer gain, F/(F/sec)
@@ -409,9 +411,8 @@ void loop()
     static unsigned long    lastRead     = 0UL; // Last read time, ms
     static int              RESET        = 1;   // Dynamic initialization flag, T/F
     double                  TaRat_Obs;          // Modeled rate of change of temp, F/sec
-    static double           TaRat_sense;        // Rate of change of temp, F/sec
+    static double           TaRat_Sense;        // Rate of change of temp, F/sec
     static double           tFilter;            // Modeled temp, F
-    static double           tModel;             // Modeled temp, F
 
     // Sequencing
     #ifndef NO_BLYNK
@@ -507,27 +508,37 @@ void loop()
           //
           int rawTemp = (Wire.read() << 6) & 0x3fc0;
           rawTemp     |=Wire.read() >> 2;
-          temp        = (float(rawTemp)*165.0/16383.0 - 40.0)*1.8 + 32.0 + TEMPCAL; // convert to fahrenheit and calibrate
+          Ta_Sense        = (float(rawTemp)*165.0/16383.0 - 40.0)*1.8 + 32.0 + TEMPCAL; // convert to fahrenheit and calibrate
         #else
           delay(41); // Usual U2C_time
-          temp    = tModel;
-          if ( RESET>0 ) temp = NOMSET;
+          Ta_Sense    = Ta_Obs;
+          if ( RESET>0 ) Ta_Sense = NOMSET;
         #endif
     }
     if ( model )
     {
       if ( verbose>4 ) Serial.printf("MODEL\n");
-      TaRat_Obs = houseEmbeddedModel(temp, RESET, (double)call, OAT, MODEL_DELAY/1000);
-      if ( verbose > 4) Serial.printf("temp=%f, RESET=%d\n", temp, RESET);
+      double set_Obs;
+      if ( call ) set_Obs = float(set)+float(HYST);
+      else        set_Obs = float(set)-float(HYST);
+      double duty_Obs = houseControl(RESET, set_Obs, double(call), Ta_Sense,  Ta_Obs,\
+                          TaRat_Sense, TaRat_Obs, MODEL_DELAY/1000);
+      #ifndef BARE_PHOTON
+      TaRat_Obs       = houseEmbeddedModel(Ta_Sense, RESET, duty_Obs, OAT, MODEL_DELAY/1000);
+      #else
+      TaRat_Obs       = houseEmbeddedModel(Ta_Sense, RESET, double(call), OAT, MODEL_DELAY/1000);
+      #endif
+      if ( verbose > 4) Serial.printf("Ta_Sense=%f, RESET=%d, TaRat_Sense=%f, TaRat_Obs=%f\n", \
+                          Ta_Sense, RESET, TaRat_Sense, TaRat_Obs);
     }
     if ( filter )
     {
       if ( verbose>4 ) Serial.printf("FILTER\n");
-      TaRat_sense = rateFilter->calculate(temp, RESET, tFilter);
-      if ( verbose > 4) Serial.printf("temp=%f, RESET=%d, tFilter=%f a=%f b=%f c=%f rstate=%f lstate=%f rate=%f\n", temp, RESET, tFilter, rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), TaRat_sense );
+      TaRat_Sense = rateFilter->calculate(Ta_Sense, RESET, tFilter);
+      if ( verbose > 4) Serial.printf("Ta_Sense=%f, RESET=%d, tFilter=%f a=%f b=%f c=%f rstate=%f lstate=%f rate=%f\n", Ta_Sense, RESET, tFilter, rateFilter->a(), rateFilter->b(), rateFilter->c(), rateFilter->rstate(), rateFilter->lstate(), TaRat_Sense );
       RESET = 0;
     }
-    if ( read ) tempComp  = temp + TaRat_sense*Kd;
+    if ( read ) tempComp  = Ta_Sense + TaRat_Obs*Kv;
 
     // Interrogate pot; run fast for good tactile feedback
     // my pot puts out 2872 - 4088 observed using following
@@ -633,7 +644,7 @@ void loop()
           displayMessage("T=");
           break;
         case 15:
-          displayTemperature(roundf(temp));
+          displayTemperature(roundf(Ta_Sense));
           break;
         case 17:
           displayMessage("O=");
@@ -688,7 +699,7 @@ void loop()
     {
       char  tmpsStr[140];
       sprintf(tmpsStr, "|%s|CALL %d | SET %d | TEMP %7.3f | TEMPC %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | WEB %d | SCH %d | OAT %4.1f | TMOD %7.3f |\0", \
-      hmString.c_str(), call, set, temp, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, tModel);
+      hmString.c_str(), call, set, Ta_Sense, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, Ta_Obs);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
       #endif
@@ -708,7 +719,7 @@ void loop()
               if (verbose>4) Serial.printf("Blynk write1\n");
               Blynk.virtualWrite(V0,  call);
               Blynk.virtualWrite(V1,  set);
-              Blynk.virtualWrite(V2,  temp);
+              Blynk.virtualWrite(V2,  Ta_Sense);
               Blynk.virtualWrite(V3,  hum);
               Blynk.virtualWrite(V4,  tempComp);
             }
@@ -726,7 +737,7 @@ void loop()
               Blynk.virtualWrite(V10, lastChangedWebDmd);
               Blynk.virtualWrite(V11, set);
               Blynk.virtualWrite(V12, schdDmd);
-              Blynk.virtualWrite(V13, temp);
+              Blynk.virtualWrite(V13, Ta_Sense);
             }
             if (publish4)
             {
@@ -736,7 +747,7 @@ void loop()
               Blynk.virtualWrite(V16, callCount*3+68);
               Blynk.virtualWrite(V17, reco);
               Blynk.virtualWrite(V18, OAT);
-              Blynk.virtualWrite(V19, tModel);
+              Blynk.virtualWrite(V19, Ta_Obs);
             }
           #endif
         }
@@ -749,3 +760,42 @@ void loop()
     }
     if (verbose>5) Serial.printf("end loop()\n");
 }  // loop
+
+
+// Observer rate filter:  produces clean temperature rate signal from noisey measurement
+// using an embedded house model.  Linear analysis may be needed to design coefficients.
+// Simulink model provided in documentation.
+double  houseControl(const bool RESET, const double set, const double duty, const double Ta_Sense,\
+   const double Ta_Obs, const double TaRat_Sense, const double TaRat_Obs, const double T)
+{
+    const   double  Kei       = 2e-5;                 // Woodstove rejection PI integrator gain, (r/s)/F
+    const   double  Kep       = 4;                    // Woodstove rejection PI proportional gain, F/F
+    const   double  Ki        = 1e-5;                 // Observer PI integrator gain, (r/s)/F
+    const   double  Kd        = 800;                  // Observer PI velocity feedback gain, r/s
+    const   double  Kf        = 1;                    // Observer PI velocity error gain, r/s
+    const   double  Kp        = 2;                    // Observer PI proportional gain, F/F
+
+    static  double  int1      = 0.0;                  // Woodstove rejection integrator state, F
+    static  double  int2      = 0.0;                  // Observer PI integrator state, F
+
+    double          duty_Obs;                         // Calculated duty to control house, 0-1
+    double          eint1;                            // Woodstove rejection PI error, F
+    double          eint2;                            // Observer PI error, F
+    double          stoveReject;                       // Woodstove rejection PI signal, F
+
+    if ( RESET )  int1 = int2 = 0.0;
+
+    // Woodstove Rejection
+    eint1       = (Ta_Obs - Ta_Sense);
+    int1        = max(min(int1 + Kei*eint1, 10), -10);
+    stoveReject = int1 + Kep*eint1;
+
+    // Observer PI
+    eint2       = set - stoveReject - Kd*TaRat_Obs - Kf*TaRat_Sense;
+    int2        = max(min(int2 + Ki*eint2,          1), -1);
+    duty_Obs    = max(min(int2 + duty + Kp*eint2,   1), 0);
+
+    if ( verbose > 3) Serial.printf("TaO=%f, Ta=%f, int1=%f, stoveReject=%f, TaRO=%f, TaR=%f, set=%f, int2=%f, duty_Obs=%f\n",\
+                      Ta_Obs, Ta_Sense, int1, stoveReject, TaRat_Obs, TaRat_Sense, set, int2);
+    return duty_Obs;
+}
