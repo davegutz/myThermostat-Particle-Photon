@@ -787,12 +787,12 @@ double  houseControl(const bool RESET, const double set, const double duty, cons
 
     // Woodstove Rejection
     eint1       = (Ta_Obs - Ta_Sense);
-    int1        = max(min(int1 + Kei*eint1, 10), -10);
+    int1        = max(min(int1 + Kei*eint1*T,       10), -10);
     stoveReject = int1 + Kep*eint1;
 
     // Observer PI
     eint2       = set - stoveReject - Kd*TaRat_Obs - Kf*TaRat_Sense;
-    int2        = max(min(int2 + Ki*eint2,          1), -1);
+    int2        = max(min(int2 + Ki*eint2*T,        1), -1);
     duty_Obs    = max(min(int2 + duty + Kp*eint2,   1), 0);
 
     if ( verbose > 3) Serial.printf("TaO=%f, Ta=%f, int1=%f, stoveReject=%f, TaRO=%f, TaR=%f, set=%f, int2=%f, duty_Obs=%f\n",\
