@@ -8,6 +8,7 @@
 
   11-Nov-2015   Dave Gutz   Created
   17-Jan-2016   Dave Gutz   Major cleanup, rtc eliminated and files organized
+  28-Jan-2016   Dave Gutz   Added embedded observer to clean up noise
 
   TODO:::::::::::::::::::
 
@@ -41,11 +42,12 @@
       o Shift temperature to anticipate based on rate
       o Filter time constant for rate picked to be 1/10 of observed home constant
       o Gain picked to produce tempComp that is equal to observed overshoot
+      o Embedded tracking observer to filter out sensor noise
   16. GMT shift
       o Use the variable GMT define statement to set your difference to GMT in hours.
 
   Nomenclature (on Blynk):
-   CALL Call for heat, boolean
+   CALL Call for heat, boolean.   Plotted also as SET+1.
    DMD  Temperature setpoint demanded by web, F
    HELD Confirmation of web HOLD demand, boolean
    HOLD Web HOLD demand, boolean
@@ -54,12 +56,15 @@
    OAT  Outside air temperature, F
    POT  The pot reading converted to degrees demand, F
    RECO Recovery to warmer schedule on cold day underway, boolean
+   REJH Heat modeled to reject other heat sources.  Input to embedded model. F/sec
    SCHD The time-scheduled setpoint stored in tables, F
    SET  Temperature setpoint of thermostat, F
    T    Control law update time, sec
    TEMP Measured temperature, F
+   TMOD Modeled temperature from embedded model, F
    TMPC Filtered anticipation temperature, F
    WEB  The Web temperature demand, F
+
 
    On your Blynk app:
    0.   Connect a green LED or 0-1 500 ms gage to V0 (CALL)
@@ -78,8 +83,9 @@
    12.  Connect an orange numerical 50-72 10 sec display to V12 (SCHD)
    13.  Connect a red numerical 30-100 1 sec display to V13 (TEMP)
    14.  Connect a blue history graph to V16 (CALL)
-   15.  Connect an orange numerical 0-1 5 sec display to V17 (RECO)
-   16.  Connect a blue numerical -50 - 120 30 sec display to V18 (OAT)
+   15.  Connect a blue numerical -50 - 120 30 sec display to V18 (OAT)
+   16.  Connect an orange numerical 50-72 30 sec display to V19 (TMOD)
+   17.  Connect a red numerical -1 to 1 60 sec display to V20 (REJH)
 
    Dependencies:  ADAFRUIT-LED-BACKPACK, SPARKTIME, SPARKINTERVALTIMER, BLYNK,
    blynk app account, Particle account

@@ -697,7 +697,7 @@ void loop()
     if ( publish1 || publish2 || publish3 || publish4 )
     {
       char  tmpsStr[150];
-      sprintf(tmpsStr, "|%s|CALL %d|SET %d|TEMP %7.3f|TEMPC %7.3f|HUM %d|HELD %d|T %5.2f|POT %d|WEB %d|SCH %d|OAT %4.1f|TMOD %7.3f|REJH %7.3f|\0", \
+      sprintf(tmpsStr, "|%s|CALL %d|SET %d|TEMP %7.3f|TEMPC %7.3f|HUM %d|HELD %d|T %5.2f|POT %d|WEB %d|SCH %d|OAT %4.1f|TMOD %7.3f|REJH %6.3f|\0", \
       hmString.c_str(), call, set, Ta_Sense, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, Ta_Obs, rejectHeat*200);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
@@ -744,7 +744,7 @@ void loop()
               if (verbose>4) Serial.printf("Blynk write4\n");
               Blynk.virtualWrite(V14, I2C_Status);
               Blynk.virtualWrite(V15, hmString);
-              Blynk.virtualWrite(V16, callCount*1+68);
+              Blynk.virtualWrite(V16, callCount*1+set-HYST);
               Blynk.virtualWrite(V17, reco);
               Blynk.virtualWrite(V18, OAT);
               Blynk.virtualWrite(V19, Ta_Obs);
