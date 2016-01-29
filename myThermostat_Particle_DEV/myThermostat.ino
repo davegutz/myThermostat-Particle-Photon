@@ -54,8 +54,8 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #include "mySubs.h"
 //double lookupTemp(double tim);
 //double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
-double  houseControl(const bool RESET, const double set, const double duty, const double Ta_Sense,\
-   const double Ta_Obs, const double TaRat_Sense, const double TaRat_Obs, const double T);
+double  houseControl(const bool RESET, const double duty, const double Ta_Sense,\
+   const double Ta_Obs, const double T);
 //
 // Dependent includes.   Easier to debug code if remove unused include files
 #include "SparkIntervalTimer.h"
@@ -97,6 +97,7 @@ int                 potDmd          = 0;    // Pot value, deg F
 int                 potValue        = 62;   // Dial raw value, F
 char                publishString[40];      // For uptime recording
 bool                reco;                   // Indicator of recovering on cold days by shifting schedule
+double              rejectHeat      = 0.0;  // Adjustment to embedded  model to match sensor, F/sec
 int                 schdDmd         = 62;   // Sched raw value, F
 #ifndef NO_PARTICLE
   String            statStr("WAIT...");     // Status string
@@ -392,7 +393,11 @@ void loop()
     bool                    query;              // Query schedule and OAT, T/F
     bool                    read;               // Read, T/F
     bool                    checkPot;            // Display to LED, T/F
-    const  double           Kv           = 800; // Rate gain, F/(F/sec)
+    #ifndef BARE_PHOTON
+      const  double         Kv           = 800; // Rate gain, F/(F/sec)
+    #else
+      const  double         Kv           = 0;   // Rate gain, F/(F/sec)
+    #endif
     const  double           Kei          = 2e-5;// Correction integral gain, (F/sec)/F
     const  double           Kep          = 4;   // Correction proportional gain, F/F
     const  double           Kf           = 1;   // Observer gain, F/(F/sec)
@@ -518,16 +523,10 @@ void loop()
     if ( model )
     {
       if ( verbose>4 ) Serial.printf("MODEL\n");
-      double set_Obs;
-      if ( call ) set_Obs = float(set)+float(HYST);
-      else        set_Obs = float(set)-float(HYST);
-      double duty_Obs = houseControl(RESET, set_Obs, double(call), Ta_Sense,  Ta_Obs,\
-                          TaRat_Sense, TaRat_Obs, MODEL_DELAY/1000);
       #ifndef BARE_PHOTON
-      TaRat_Obs       = houseEmbeddedModel(Ta_Sense, RESET, duty_Obs, OAT, MODEL_DELAY/1000);
-      #else
-      TaRat_Obs       = houseEmbeddedModel(Ta_Sense, RESET, double(call), OAT, MODEL_DELAY/1000);
+      rejectHeat = houseControl(RESET, double(call), Ta_Sense,  Ta_Obs, MODEL_DELAY/1000);
       #endif
+      TaRat_Obs  = houseEmbeddedModel(Ta_Sense, RESET, double(call), rejectHeat, OAT, MODEL_DELAY/1000);
       if ( verbose > 4) Serial.printf("Ta_Sense=%f, RESET=%d, TaRat_Sense=%f, TaRat_Obs=%f\n", \
                           Ta_Sense, RESET, TaRat_Sense, TaRat_Obs);
     }
@@ -697,9 +696,9 @@ void loop()
     // Publish
     if ( publish1 || publish2 || publish3 || publish4 )
     {
-      char  tmpsStr[140];
-      sprintf(tmpsStr, "|%s|CALL %d | SET %d | TEMP %7.3f | TEMPC %7.3f | HUM %d | HELD %d | T %5.2f | POT %d | WEB %d | SCH %d | OAT %4.1f | TMOD %7.3f |\0", \
-      hmString.c_str(), call, set, Ta_Sense, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, Ta_Obs);
+      char  tmpsStr[150];
+      sprintf(tmpsStr, "|%s|CALL %d|SET %d|TEMP %7.3f|TEMPC %7.3f|HUM %d|HELD %d|T %5.2f|POT %d|WEB %d|SCH %d|OAT %4.1f|TMOD %7.3f|REJH %7.3f|\0", \
+      hmString.c_str(), call, set, Ta_Sense, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, Ta_Obs, rejectHeat*200);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
       #endif
@@ -730,6 +729,7 @@ void loop()
               Blynk.virtualWrite(V7,  controlTime);
               Blynk.virtualWrite(V8,  updateTime);
               Blynk.virtualWrite(V9,  potDmd);
+              Blynk.virtualWrite(V20, rejectHeat*200);
             }
             if (publish3)
             {
@@ -744,7 +744,7 @@ void loop()
               if (verbose>4) Serial.printf("Blynk write4\n");
               Blynk.virtualWrite(V14, I2C_Status);
               Blynk.virtualWrite(V15, hmString);
-              Blynk.virtualWrite(V16, callCount*3+68);
+              Blynk.virtualWrite(V16, callCount*1+68);
               Blynk.virtualWrite(V17, reco);
               Blynk.virtualWrite(V18, OAT);
               Blynk.virtualWrite(V19, Ta_Obs);
@@ -765,37 +765,27 @@ void loop()
 // Observer rate filter:  produces clean temperature rate signal from noisey measurement
 // using an embedded house model.  Linear analysis may be needed to design coefficients.
 // Simulink model provided in documentation.
-double  houseControl(const bool RESET, const double set, const double duty, const double Ta_Sense,\
-   const double Ta_Obs, const double TaRat_Sense, const double TaRat_Obs, const double T)
+double  houseControl(const bool RESET, const double duty, const double Ta_Sense,\
+   const double Ta_Obs, const double T)
 {
-    const   double  Kei       = 2e-5;                 // Woodstove rejection PI integrator gain, (r/s)/F
-    const   double  Kep       = 4;                    // Woodstove rejection PI proportional gain, F/F
-    const   double  Ki        = 1e-5;                 // Observer PI integrator gain, (r/s)/F
-    const   double  Kd        = 800;                  // Observer PI velocity feedback gain, r/s
-    const   double  Kf        = 1;                    // Observer PI velocity error gain, r/s
-    const   double  Kp        = 2;                    // Observer PI proportional gain, F/F
+    const   double  Kei       = 2e-4;                 // Rejection PI integrator gain, (r/s)/F
+    const   double  Kep       = 1;                    // Rejection PI proportional gain, F/F
+    static  double  intE      = 0.0;                  // Rejection integrator state, F
+    double          rejectHeat;                       // Calculated duty to control house, 0-1
+    double          ePI;                              // Rejection PI error, F
+    double          Duty_Reject;                      // PI result, units 200*F?
 
-    static  double  int1      = 0.0;                  // Woodstove rejection integrator state, F
-    static  double  int2      = 0.0;                  // Observer PI integrator state, F
+    // Initialize
+    if ( RESET )  intE = 0.0;
 
-    double          duty_Obs;                         // Calculated duty to control house, 0-1
-    double          eint1;                            // Woodstove rejection PI error, F
-    double          eint2;                            // Observer PI error, F
-    double          stoveReject;                       // Woodstove rejection PI signal, F
+    // Rejection
+    ePI         = Ta_Sense - Ta_Obs;
+    intE        = max(min(intE + Kei*ePI*T, 1), -1);
+    Duty_Reject = intE + Kep*ePI;
+    rejectHeat  = max(min(Duty_Reject, 1), -1)*0.005;
 
-    if ( RESET )  int1 = int2 = 0.0;
+    if ( verbose > 3) Serial.printf("Ta_Obs=%f, Ta_Sense=%f, intE=%f, Duty_Reject=%f, duty=%f, rejectHeat=%f\n",\
+                      Ta_Obs, Ta_Sense, intE, Duty_Reject, duty, rejectHeat);
 
-    // Woodstove Rejection
-    eint1       = (Ta_Obs - Ta_Sense);
-    int1        = max(min(int1 + Kei*eint1*T,       10), -10);
-    stoveReject = int1 + Kep*eint1;
-
-    // Observer PI
-    eint2       = set - stoveReject - Kd*TaRat_Obs - Kf*TaRat_Sense;
-    int2        = max(min(int2 + Ki*eint2*T,        1), -1);
-    duty_Obs    = max(min(int2 + duty + Kp*eint2,   1), 0);
-
-    if ( verbose > 3) Serial.printf("TaO=%f, Ta=%f, int1=%f, stoveReject=%f, TaRO=%f, TaR=%f, set=%f, int2=%f, duty_Obs=%f\n",\
-                      Ta_Obs, Ta_Sense, int1, stoveReject, TaRat_Obs, TaRat_Sense, set, int2);
-    return duty_Obs;
+    return rejectHeat;
 }

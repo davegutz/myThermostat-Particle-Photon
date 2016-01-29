@@ -25,7 +25,7 @@ void    getWeather(void);
 void    gotWeatherData(const char *name, const char *data);
 void    loadTemperature(void);
 double  lookupTemp(double tim);
-double  houseEmbeddedModel(const double temp, const int RESET, const double duty, const double OAT, const double T);
+double  houseEmbeddedModel(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T);
 double  recoveryTime(double OAT);
 void    saveTemperature();
 double  scheduledTemp(double hourDecimal, double recoTime, bool *reco);

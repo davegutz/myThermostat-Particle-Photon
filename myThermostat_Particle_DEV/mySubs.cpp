@@ -241,7 +241,7 @@ double lookupTemp(double tim)
 }
 
 // Simple embedded house model for testing logic
-double houseEmbeddedModel(const double temp, const int RESET, const double duty, const double OAT, const double T)
+double  houseEmbeddedModel(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T)
 {
     // Three-state thermal model
 
@@ -269,7 +269,7 @@ double houseEmbeddedModel(const double temp, const int RESET, const double duty,
     // Derivatives
     double dTw_dt   = -(Tw-Ta_Obs)*Ha - (Tw-OAT)*Ho;
     double dTa_dt   = -(Ta_Obs-Tw)*Ha - (Ta_Obs-Tc)*Hc;
-    double dTc_dt   = -(Tc-Ta_Obs)*Hc + duty*(Tb-Tc)*Hf;
+    double dTc_dt   = -(Tc-Ta_Obs)*Hc + duty*(Tb-Tc)*Hf + otherHeat;
 
     if ( verbose > 2 )
     {
