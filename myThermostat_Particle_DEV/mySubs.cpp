@@ -52,39 +52,6 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
 
 
 
-// Calculate recovery time to heat better on cold days
-double recoveryTime(double OAT)
-{
-    double recoTime = (40.0 - OAT)/30.0;
-    recoTime        = max(min(recoTime, 2.0), 0.0);
-    return recoTime;
-}
-
-
-
-
-#ifndef NO_WEATHER_HOOK
-// Returns any text found between a start and end string inside 'str'
-// example: startfooend  -> returns foo
-String tryExtractString(String str, const char* start, const char* end)
-{
-  if (str == NULL)
-  {
-    return NULL;
-  }
-  int idx = str.indexOf(start);
-  if (idx < 0)
-  {
-    return NULL;
-  }
-  int endIdx = str.indexOf(end);
-  if (endIdx < 0)
-  {
-    return NULL;
-  }
-  return str.substring(idx + strlen(start), endIdx);
-}
-#endif
 
 //Updates Weather Forecast Data
 #ifndef NO_WEATHER_HOOK
@@ -180,6 +147,118 @@ void gotWeatherData(const char *name, const char *data)
 }
 #endif
 
+// Observer rate filter:  produces clean temperature rate signal from noisey measurement
+// using an embedded house model.  Linear analysis may be needed to design coefficients.
+// Simulink model provided in documentation.
+double  houseControl(const bool RESET, const double duty, const double Ta_Sense,\
+   const double Ta_Obs, const double T)
+{
+    const   double  Kei       = 2e-4;                 // Rejection PI integrator gain, (r/s)/F
+    const   double  Kep       = 1;                    // Rejection PI proportional gain, F/F
+    static  double  intE      = 0.0;                  // Rejection integrator state, F
+    double          rejectHeat;                       // Calculated duty to control house, 0-1
+    double          ePI;                              // Rejection PI error, F
+    double          Duty_Reject;                      // PI result, units 200*F?
+
+    // Initialize
+    if ( RESET )  intE = 0.0;
+
+    // Rejection
+    ePI         = Ta_Sense - Ta_Obs;
+    intE        = max(min(intE + Kei*ePI*T, 1), -1);
+    Duty_Reject = intE + Kep*ePI;
+    rejectHeat  = max(min(Duty_Reject, 1), -1)*0.005;
+
+    if ( verbose > 3) Serial.printf("Ta_Obs=%f, Ta_Sense=%f, intE=%f, Duty_Reject=%f, duty=%f, rejectHeat=%f\n",\
+                      Ta_Obs, Ta_Sense, intE, Duty_Reject, duty, rejectHeat);
+
+    return rejectHeat;
+}
+
+// Simple embedded house model for testing logic
+double  houseEmbeddedModel(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T)
+{
+    // Three-state thermal model
+
+    // The boiler in the house this was tuned to has a water reset schedule
+    // that is a function of OAT.   If yours in constant, just
+    // Tx to same value as Tn
+    const double Rn   = 29;     // Low boiler reset curve OAT break, F
+    const double Rx   = 69;     // High boiler reset curve OAT break, F
+    const double Tn   = 180;    // Low boiler reset curve setpoint break, F
+    const double Tx   = 120;    // High boiler reset curve setpoint break, F
+    double Tb   = max(min((OAT-Rn)/(Rx-Rn)*(Tx-Tn)+Tn, Tn), Tx); // Curve interpolation
+
+    // Constants tuned to my house.  86400 is number of seconds in day
+    // See file "thermo20160123.xlsx" in documentation.
+    const double Hc   = 114./86400;   // Core to air constant, BTU/sec/F
+    const double Ha   = 1.61/86400;   // Air to wall constant, BTU/sec/F
+    const double Hf   = 1.75/86400;   // Firing constant, BTU/sec/F
+    const double Ho   = 283./86400;   // Wall to outside constant, BTU/sec/F
+
+    // States
+    if ( RESET>0 ) Ta_Obs = temp; // Air temp in house, F
+    static double Tw  = (OAT*Ho+Ta_Obs*Ha)/(Ho+Ha);   // Outside wall temp, F
+    static double Tc  = (Ta_Obs*(Ha+Hc)-Tw*Ha)/Hc;    // Core heater temp, F
+
+    // Derivatives
+    double dTw_dt   = -(Tw-Ta_Obs)*Ha - (Tw-OAT)*Ho;
+    double dTa_dt   = -(Ta_Obs-Tw)*Ha - (Ta_Obs-Tc)*Hc;
+    double dTc_dt   = -(Tc-Ta_Obs)*Hc + duty*(Tb-Tc)*Hf + otherHeat;
+
+    if ( verbose > 2 )
+    {
+      Serial.printf("model:  dTw_dt=%7.3f, dTa_dt=%7.3f, dTc_dt=%7.3f\n", dTw_dt, dTa_dt, dTc_dt);
+      Serial.printf("model:  Tb=%7.3f, Tc=%7.3f, Ta=%7.3f, Tw=%7.3f, OAT=%7.3f\n", Tb, Tc, Ta_Obs, Tw, OAT);
+    }
+    // Integration (Euler Backward Difference)
+    Tw      = min(max(Tw+dTw_dt*T,      -40), 120);
+    Ta_Obs  = min(max(Ta_Obs+dTa_dt*T,  -40), 120);
+    Tc      = min(max(Tc+dTc_dt*T,      -40), 120);
+    return dTa_dt;
+}
+
+// HouseHeat Class Functions
+// Constructors
+HouseHeat::HouseHeat()
+  :   name_(""), Ha_(0), Hc_(0), Hf_(0), Ho_(0), Rn_(0), Rx_(0), Tn_(0), Tx_(0)
+{}
+HouseHeat::HouseHeat(const String name, const double Ha, const double Hc, const double Hf, const double Ho, \
+  const double Rn, const double Rx, const double Tn, const double Tx)
+  :   name_(name), Ha_(Ha), Hc_(Hc), Hf_(Hf), Ho_(Ho), Rn_(Rn), Rx_(Rx), Tn_(Tn), Tx_(Tx)
+{}
+// Calculate
+double HouseHeat::update(const bool RESET, const double T, const double temp, const double duty, \
+  const double otherHeat, const double OAT)
+{
+  // Three-state thermal model
+  // The boiler in the house this was tuned to has a water reset schedule
+  // that is a function of OAT.   If yours in constant, just
+  // Tx to same value as Tn
+  double Tb   = max(min((OAT-Rn_)/(Rx_-Rn_)*(Tx_-Tn_)+Tn_, Tn_), Tx_); // Curve interpolation
+  // States
+  if ( RESET )
+  {
+    Ta_   = temp;                           // Air temp in house, F
+    Tw_   = (OAT*Ho_+Ta_*Ha_)/(Ho_+Ha_);    // Outside wall temp, F
+    Tc_   = (Ta_*(Ha_+Hc_)-Tw_*Ha_)/Hc_;    // Core heater temp, F
+  }
+  // Derivatives
+  double dTw_dt   = -(Tw_-Ta_)*Ha_ - (Tw_-OAT)*Ho_;
+  double dTa_dt   = -(Ta_-Tw_)*Ha_ - (Ta_-Tc_)*Hc_;
+  double dTc_dt   = -(Tc_-Ta_)*Hc_ + duty*(Tb-Tc_)*Hf_ + otherHeat;
+  if ( verbose > 2 )
+  {
+    Serial.printf("%s:  dTw_dt=%7.3f, dTa_dt=%7.3f, dTc_dt=%7.3f\n", name_.c_str(), dTw_dt, dTa_dt, dTc_dt);
+    Serial.printf("%s:  Tb=%7.3f, Tc=%7.3f, Ta=%7.3f, Tw=%7.3f, OAT=%7.3f\n", name_.c_str(), Tb, Tc_, Ta_, Tw_, OAT);
+  }
+  // Integration (Euler Backward Difference)
+  Tw_  = min(max(Tw_+dTw_dt*T,  -40), 120);
+  Ta_  = min(max(Ta_+dTa_dt*T,  -40), 120);
+  Tc_  = min(max(Tc_+dTc_dt*T,  -40), 120);
+  return dTa_dt;
+}
+
 
 // Setup function to Load the saved settings so can resume after power failure
 // or software reflash.  Note:  flash may return nonsense such as for a brand
@@ -240,48 +319,15 @@ double lookupTemp(double tim)
     return (tempCh[day][num]);
 }
 
-// Simple embedded house model for testing logic
-double  houseEmbeddedModel(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T)
+
+// Calculate recovery time to heat better on cold days
+double recoveryTime(double OAT)
 {
-    // Three-state thermal model
-
-    // The boiler in the house this was tuned to has a water reset schedule
-    // that is a function of OAT.   If yours in constant, just
-    // Tx to same value as Tn
-    const double Rn   = 29;     // Low boiler reset curve OAT break, F
-    const double Rx   = 69;     // High boiler reset curve OAT break, F
-    const double Tn   = 180;    // Low boiler reset curve setpoint break, F
-    const double Tx   = 120;    // High boiler reset curve setpoint break, F
-    double Tb   = max(min((OAT-Rn)/(Rx-Rn)*(Tx-Tn)+Tn, Tn), Tx); // Curve interpolation
-
-    // Constants tuned to my house.  86400 is number of seconds in day
-    // See file "thermo20160123.xlsx" in documentation.
-    const double Hc   = 114./86400;   // Core to air constant, BTU/sec/F
-    const double Ha   = 1.61/86400;   // Air to wall constant, BTU/sec/F
-    const double Hf   = 1.75/86400;   // Firing constant, BTU/sec/F
-    const double Ho   = 283./86400;   // Wall to outside constant, BTU/sec/F
-
-    // States
-    if ( RESET>0 ) Ta_Obs = temp; // Air temp in house, F
-    static double Tw  = (OAT*Ho+Ta_Obs*Ha)/(Ho+Ha);   // Outside wall temp, F
-    static double Tc  = (Ta_Obs*(Ha+Hc)-Tw*Ha)/Hc;    // Core heater temp, F
-
-    // Derivatives
-    double dTw_dt   = -(Tw-Ta_Obs)*Ha - (Tw-OAT)*Ho;
-    double dTa_dt   = -(Ta_Obs-Tw)*Ha - (Ta_Obs-Tc)*Hc;
-    double dTc_dt   = -(Tc-Ta_Obs)*Hc + duty*(Tb-Tc)*Hf + otherHeat;
-
-    if ( verbose > 2 )
-    {
-      Serial.printf("model:  dTw_dt=%7.3f, dTa_dt=%7.3f, dTc_dt=%7.3f\n", dTw_dt, dTa_dt, dTc_dt);
-      Serial.printf("model:  Tb=%7.3f, Tc=%7.3f, Ta=%7.3f, Tw=%7.3f, OAT=%7.3f\n", Tb, Tc, Ta_Obs, Tw, OAT);
-    }
-    // Integration (Euler Backward Difference)
-    Tw      = min(max(Tw+dTw_dt*T,      -40), 120);
-    Ta_Obs  = min(max(Ta_Obs+dTa_dt*T,  -40), 120);
-    Tc      = min(max(Tc+dTc_dt*T,      -40), 120);
-    return dTa_dt;
+    double recoTime = (40.0 - OAT)/30.0;
+    recoTime        = max(min(recoTime, 2.0), 0.0);
+    return recoTime;
 }
+
 
 // Save temperature setpoint to flash for next startup.   During power
 // failures the thermostat will reset to the condition it was in before
@@ -322,3 +368,27 @@ void setupMatrix(Adafruit_8x8matrix m)
     m.setRotation(0);
     m.setCursor(0, 0);
 }
+
+
+#ifndef NO_WEATHER_HOOK
+// Returns any text found between a start and end string inside 'str'
+// example: startfooend  -> returns foo
+String tryExtractString(String str, const char* start, const char* end)
+{
+  if (str == NULL)
+  {
+    return NULL;
+  }
+  int idx = str.indexOf(start);
+  if (idx < 0)
+  {
+    return NULL;
+  }
+  int endIdx = str.indexOf(end);
+  if (endIdx < 0)
+  {
+    return NULL;
+  }
+  return str.substring(idx + strlen(start), endIdx);
+}
+#endif
