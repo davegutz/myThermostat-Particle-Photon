@@ -52,10 +52,6 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define TEMPCAL     -4                      // Calibrate temp sense (0), F
 #define ONE_DAY_MILLIS (24*60*60*1000)      // Number of milliseconds in one day (24*60*60*1000)
 #include "mySubs.h"
-//double lookupTemp(double tim);
-//double scheduledTemp(double hourDecimal, double recoTime, bool *reco);
-double  houseControl(const bool RESET, const double duty, const double Ta_Sense,\
-   const double Ta_Obs, const double T);
 //
 // Dependent includes.   Easier to debug code if remove unused include files
 #include "SparkIntervalTimer.h"
@@ -75,6 +71,8 @@ Make it yourself.   It should look like this, with your personal authorizations:
 */
 #include "myFilters.h"
 
+
+
 using namespace std;
 
 // Global variables
@@ -82,9 +80,11 @@ enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 Mode                controlMode     = POT;  // Present control mode
+static double       controlTime     = 0.0;  // Decimal time, hour
 static  uint8_t     displayCount    = 0;    // Display frame number to execute
 String              hmString        = "00:00"; // time, hh:mm
-static double       controlTime     = 0.0;  // Decimal time, hour
+HouseHeat*          house;                  // House model
+HouseHeat*          houseEmbMod;            // House embedded model
 int                 hum             = 0;    // Relative humidity integer value, %
 int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
@@ -103,7 +103,7 @@ int                 schdDmd         = 62;   // Sched raw value, F
   String            statStr("WAIT...");     // Status string
 #endif
 const  double       tau           = 40.0;   // Rate filter time constant, sec, ~1/5 observed home time constant
-double              Ta_Sense          = 65.0;   // Sensed temp, F
+double              Ta_Sense      = 65.0;   // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
 
@@ -355,6 +355,10 @@ void setup()
     Spark.subscribe("hook-response/get_weather", gotWeatherData, MY_DEVICES);
   #endif
 
+  // Models
+  house       = new HouseHeat("house",    1.61/86400, 114./86400, 1.75/86400, 283./86400, 29, 69, 180, 120, 0.001);
+  houseEmbMod = new HouseHeat("embHouse", 1.61/86400, 114./86400, 1.75/86400, 283./86400, 29, 69, 180, 120);
+
   // Rate filter
   rateFilter  = new RateLagExp(float(FILTER_DELAY)/1000.0, tau, -0.1, 0.1);
 
@@ -393,11 +397,7 @@ void loop()
     bool                    query;              // Query schedule and OAT, T/F
     bool                    read;               // Read, T/F
     bool                    checkPot;            // Display to LED, T/F
-    #ifndef BARE_PHOTON
-      const  double         Kv           = 800; // Rate gain, F/(F/sec)
-    #else
-      const  double         Kv           = 0;   // Rate gain, F/(F/sec)
-    #endif
+    const  double           Kv           = 600; // Rate gain, F/(F/sec)
     const  double           Kei          = 2e-5;// Correction integral gain, (F/sec)/F
     const  double           Kep          = 4;   // Correction proportional gain, F/F
     const  double           Kf           = 1;   // Observer gain, F/(F/sec)
@@ -516,19 +516,17 @@ void loop()
           Ta_Sense        = (float(rawTemp)*165.0/16383.0 - 40.0)*1.8 + 32.0 + TEMPCAL; // convert to fahrenheit and calibrate
         #else
           delay(41); // Usual U2C_time
-          Ta_Sense    = Ta_Obs;
           if ( RESET>0 ) Ta_Sense = NOMSET;
+          house->update(RESET, READ_DELAY/1000, Ta_Sense, double(call), 0.0, OAT);
+          Ta_Sense    = house->Ta_Sense();
         #endif
     }
     if ( model )
     {
       if ( verbose>4 ) Serial.printf("MODEL\n");
-      #ifndef BARE_PHOTON
-      rejectHeat = houseControl(RESET, double(call), Ta_Sense,  Ta_Obs, MODEL_DELAY/1000);
-      #endif
-      TaRat_Obs  = houseEmbeddedModel(Ta_Sense, RESET, double(call), rejectHeat, OAT, MODEL_DELAY/1000);
-      if ( verbose > 4) Serial.printf("Ta_Sense=%f, RESET=%d, TaRat_Sense=%f, TaRat_Obs=%f\n", \
-                          Ta_Sense, RESET, TaRat_Sense, TaRat_Obs);
+      rejectHeat = houseTrack(RESET, double(call), Ta_Sense,  Ta_Obs, MODEL_DELAY/1000);
+      TaRat_Obs = houseEmbMod->update(RESET, MODEL_DELAY/1000, Ta_Sense, double(call), rejectHeat, OAT);
+      Ta_Obs    = houseEmbMod->Ta();
     }
     if ( filter )
     {
@@ -698,7 +696,7 @@ void loop()
     {
       char  tmpsStr[150];
       sprintf(tmpsStr, "|%s|CALL %d|SET %d|TEMP %7.3f|TEMPC %7.3f|HUM %d|HELD %d|T %5.2f|POT %d|WEB %d|SCH %d|OAT %4.1f|TMOD %7.3f|REJH %6.3f|\0", \
-      hmString.c_str(), call, set, Ta_Sense, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, Ta_Obs, rejectHeat*200);
+      hmString.c_str(), call, callCount*1+set-HYST, Ta_Sense, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, Ta_Obs, rejectHeat*200);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
       #endif
@@ -760,32 +758,3 @@ void loop()
     }
     if (verbose>5) Serial.printf("end loop()\n");
 }  // loop
-
-
-// Observer rate filter:  produces clean temperature rate signal from noisey measurement
-// using an embedded house model.  Linear analysis may be needed to design coefficients.
-// Simulink model provided in documentation.
-double  houseControl(const bool RESET, const double duty, const double Ta_Sense,\
-   const double Ta_Obs, const double T)
-{
-    const   double  Kei       = 2e-4;                 // Rejection PI integrator gain, (r/s)/F
-    const   double  Kep       = 1;                    // Rejection PI proportional gain, F/F
-    static  double  intE      = 0.0;                  // Rejection integrator state, F
-    double          rejectHeat;                       // Calculated duty to control house, 0-1
-    double          ePI;                              // Rejection PI error, F
-    double          Duty_Reject;                      // PI result, units 200*F?
-
-    // Initialize
-    if ( RESET )  intE = 0.0;
-
-    // Rejection
-    ePI         = Ta_Sense - Ta_Obs;
-    intE        = max(min(intE + Kei*ePI*T, 1), -1);
-    Duty_Reject = intE + Kep*ePI;
-    rejectHeat  = max(min(Duty_Reject, 1), -1)*0.005;
-
-    if ( verbose > 3) Serial.printf("Ta_Obs=%f, Ta_Sense=%f, intE=%f, Duty_Reject=%f, duty=%f, rejectHeat=%f\n",\
-                      Ta_Obs, Ta_Sense, intE, Duty_Reject, duty, rejectHeat);
-
-    return rejectHeat;
-}

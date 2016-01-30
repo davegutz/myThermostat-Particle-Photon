@@ -30,7 +30,9 @@ private:
   double Ho_;       // Wall to outside constant, BTU/sec/F
   double Rn_;       // Low boiler reset curve OAT break, F
   double Rx_;       // High boiler reset curve OAT break, F
+  double sNoise_;   // Noise sense level, F single amplitude
   double Ta_;       // Air temp, F
+  double Ta_Sense_; // Sensed air temp (Ta_ with sNoise_), F
   double Tc_;       // Core heater temp, F
   double Tn_;       // Low boiler reset curve setpoint break, F
   double Tx_;       // High boiler reset curve setpoint break, F
@@ -39,7 +41,13 @@ public:
   HouseHeat(void);
   HouseHeat(const String name, const double Ha, const double Hc, const double Hf, const double Ho, \
     const double Rn, const double Rx, const double Tn, const double Tx);
+    HouseHeat(const String name, const double Ha, const double Hc, const double Hf, const double Ho, \
+      const double Rn, const double Rx, const double Tn, const double Tx, const double sNoise);
   double update(const bool RESET, const double T, const double temp,  const double duty, const double otherHeat, const double OAT);
+  double Ta(void){return Ta_;};
+  double Ta_Sense(void){return Ta_Sense_;};
+  double Tc(void){return Tc_;};
+  double Tw(void){return Tw_;};
 };
 
 double  decimalTime(unsigned long *currentTime, char* tempStr);
@@ -47,11 +55,11 @@ void    displayRandom(void);
 void    displayTemperature(int temp);
 void    getWeather(void);
 void    gotWeatherData(const char *name, const char *data);
-double  houseControl(const bool RESET, const double duty, const double Ta_Sense,\
+double  houseTrack(const bool RESET, const double duty, const double Ta_Sense,\
    const double Ta_Obs, const double T);
 void    loadTemperature(void);
 double  lookupTemp(double tim);
-double  houseEmbeddedModel(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T);
+//double  houseTrack(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T);
 double  recoveryTime(double OAT);
 void    saveTemperature();
 double  scheduledTemp(double hourDecimal, double recoTime, bool *reco);

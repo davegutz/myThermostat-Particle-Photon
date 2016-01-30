@@ -150,7 +150,7 @@ void gotWeatherData(const char *name, const char *data)
 // Observer rate filter:  produces clean temperature rate signal from noisey measurement
 // using an embedded house model.  Linear analysis may be needed to design coefficients.
 // Simulink model provided in documentation.
-double  houseControl(const bool RESET, const double duty, const double Ta_Sense,\
+double  houseTrack(const bool RESET, const double duty, const double Ta_Sense,\
    const double Ta_Obs, const double T)
 {
     const   double  Kei       = 2e-4;                 // Rejection PI integrator gain, (r/s)/F
@@ -175,48 +175,6 @@ double  houseControl(const bool RESET, const double duty, const double Ta_Sense,
     return rejectHeat;
 }
 
-// Simple embedded house model for testing logic
-double  houseEmbeddedModel(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T)
-{
-    // Three-state thermal model
-
-    // The boiler in the house this was tuned to has a water reset schedule
-    // that is a function of OAT.   If yours in constant, just
-    // Tx to same value as Tn
-    const double Rn   = 29;     // Low boiler reset curve OAT break, F
-    const double Rx   = 69;     // High boiler reset curve OAT break, F
-    const double Tn   = 180;    // Low boiler reset curve setpoint break, F
-    const double Tx   = 120;    // High boiler reset curve setpoint break, F
-    double Tb   = max(min((OAT-Rn)/(Rx-Rn)*(Tx-Tn)+Tn, Tn), Tx); // Curve interpolation
-
-    // Constants tuned to my house.  86400 is number of seconds in day
-    // See file "thermo20160123.xlsx" in documentation.
-    const double Hc   = 114./86400;   // Core to air constant, BTU/sec/F
-    const double Ha   = 1.61/86400;   // Air to wall constant, BTU/sec/F
-    const double Hf   = 1.75/86400;   // Firing constant, BTU/sec/F
-    const double Ho   = 283./86400;   // Wall to outside constant, BTU/sec/F
-
-    // States
-    if ( RESET>0 ) Ta_Obs = temp; // Air temp in house, F
-    static double Tw  = (OAT*Ho+Ta_Obs*Ha)/(Ho+Ha);   // Outside wall temp, F
-    static double Tc  = (Ta_Obs*(Ha+Hc)-Tw*Ha)/Hc;    // Core heater temp, F
-
-    // Derivatives
-    double dTw_dt   = -(Tw-Ta_Obs)*Ha - (Tw-OAT)*Ho;
-    double dTa_dt   = -(Ta_Obs-Tw)*Ha - (Ta_Obs-Tc)*Hc;
-    double dTc_dt   = -(Tc-Ta_Obs)*Hc + duty*(Tb-Tc)*Hf + otherHeat;
-
-    if ( verbose > 2 )
-    {
-      Serial.printf("model:  dTw_dt=%7.3f, dTa_dt=%7.3f, dTc_dt=%7.3f\n", dTw_dt, dTa_dt, dTc_dt);
-      Serial.printf("model:  Tb=%7.3f, Tc=%7.3f, Ta=%7.3f, Tw=%7.3f, OAT=%7.3f\n", Tb, Tc, Ta_Obs, Tw, OAT);
-    }
-    // Integration (Euler Backward Difference)
-    Tw      = min(max(Tw+dTw_dt*T,      -40), 120);
-    Ta_Obs  = min(max(Ta_Obs+dTa_dt*T,  -40), 120);
-    Tc      = min(max(Tc+dTc_dt*T,      -40), 120);
-    return dTa_dt;
-}
 
 // HouseHeat Class Functions
 // Constructors
@@ -225,8 +183,12 @@ HouseHeat::HouseHeat()
 {}
 HouseHeat::HouseHeat(const String name, const double Ha, const double Hc, const double Hf, const double Ho, \
   const double Rn, const double Rx, const double Tn, const double Tx)
-  :   name_(name), Ha_(Ha), Hc_(Hc), Hf_(Hf), Ho_(Ho), Rn_(Rn), Rx_(Rx), Tn_(Tn), Tx_(Tx)
+  :   name_(name), Ha_(Ha), Hc_(Hc), Hf_(Hf), Ho_(Ho), Rn_(Rn), Rx_(Rx), Tn_(Tn), Tx_(Tx), sNoise_(0)
 {}
+HouseHeat::HouseHeat(const String name, const double Ha, const double Hc, const double Hf, const double Ho, \
+    const double Rn, const double Rx, const double Tn, const double Tx, const double sNoise)
+    :   name_(name), Ha_(Ha), Hc_(Hc), Hf_(Hf), Ho_(Ho), Rn_(Rn), Rx_(Rx), Tn_(Tn), Tx_(Tx), sNoise_(sNoise)
+  {}
 // Calculate
 double HouseHeat::update(const bool RESET, const double T, const double temp, const double duty, \
   const double otherHeat, const double OAT)
@@ -247,7 +209,7 @@ double HouseHeat::update(const bool RESET, const double T, const double temp, co
   double dTw_dt   = -(Tw_-Ta_)*Ha_ - (Tw_-OAT)*Ho_;
   double dTa_dt   = -(Ta_-Tw_)*Ha_ - (Ta_-Tc_)*Hc_;
   double dTc_dt   = -(Tc_-Ta_)*Hc_ + duty*(Tb-Tc_)*Hf_ + otherHeat;
-  if ( verbose > 2 )
+  if ( verbose > 3 )
   {
     Serial.printf("%s:  dTw_dt=%7.3f, dTa_dt=%7.3f, dTc_dt=%7.3f\n", name_.c_str(), dTw_dt, dTa_dt, dTc_dt);
     Serial.printf("%s:  Tb=%7.3f, Tc=%7.3f, Ta=%7.3f, Tw=%7.3f, OAT=%7.3f\n", name_.c_str(), Tb, Tc_, Ta_, Tw_, OAT);
@@ -256,6 +218,7 @@ double HouseHeat::update(const bool RESET, const double T, const double temp, co
   Tw_  = min(max(Tw_+dTw_dt*T,  -40), 120);
   Ta_  = min(max(Ta_+dTa_dt*T,  -40), 120);
   Tc_  = min(max(Tc_+dTc_dt*T,  -40), 120);
+  Ta_Sense_ = Ta_ + sNoise_ * float(random(-10, 10))/10.0;
   return dTa_dt;
 }
 
