@@ -12,31 +12,27 @@
   17-Jan-2016   Dave Gutz   Deleted SparkTime and UDP stuff for stability.
 
   TODO:::::::::::::::::::
-Run Control frame using an interrupt so that control possible even if something
-else hangs.  This must include read of temp/hum sensor too.
-
 */
 
 //Sometimes useful for debugging
 //#pragma SPARK_NO_PREPROCESSOR
-//
+
 // Standard
 #include "application.h"                    // For Particle code classes
 SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always run regardless of network status
 #include "math.h"
-//
-// Disable flags if needed, usually commented
+
+
+// Disable flags if needed for debugging, usually commented
 //#define BARE_PHOTON                       // Run bare photon for testing.  Bare photon without this goes dark or hangs trying to write to I2C
 //#define NO_WEATHER_HOOK                   // Turn off webhook weather lookup.  Will get default OAT = 30F
 //#define WEATHER_BUG                       // Turn on bad weather return for debugging
 //#define NO_BLYNK                          // Turn off Blynk functions.  Interact using Particle cloud
 //#define NO_PARTICLE                       // Turn off Particle cloud functions.  Interact using Blynk.
-//
-// Usually defined.
-//
+
 // Test feature usually commented
 //#define  FAKETIME                         // For simulating rapid time passing of schedule
-//
+
 // Constants always defined
 #define BLYNK_TIMEOUT_MS 2000UL             // Network timeout in ms;  default provided in BlynkProtocol.h is 2000
 #define CONTROL_DELAY    4000UL             // Control law wait, ms
@@ -45,20 +41,19 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define READ_DELAY       5000UL             // Sensor read wait (5000, 100 for stress test), ms
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
 #define DISPLAY_DELAY    300UL              // LED display scheduling frame time, ms
-#define HEAT_PIN    A1                      // Heat relay output pin on Photon (A1)
-#define HYST        0.5                     // Heat control law hysteresis (0.5), F
-#define POT_PIN     A2                      // Potentiometer input pin on Photon (A2)
-#define TEMP_SENSOR 0x27                    // Temp sensor bus address (0x27)
-#define TEMPCAL     -4                      // Calibrate temp sense (0), F
-#define ONE_DAY_MILLIS (24*60*60*1000)      // Number of milliseconds in one day (24*60*60*1000)
+#define HEAT_PIN         A1                 // Heat relay output pin on Photon (A1)
+#define HYST             0.5                // Heat control law hysteresis (0.5), F
+#define LED_PIN          D7                 // Status LED
+#define MATRIX1_ADDR     0x70               // LED display matrix address
+#define MATRIX2_ADDR     0x71               // LED display matrix address
+#define POT_PIN          A2                 // Potentiometer input pin on Photon (A2)
+#define STAT_RESERVE     150                // Space to reserve for status string publish
+#define TEMP_SENSOR      0x27               // Temp sensor bus address (0x27)
+#define TEMPCAL          -4                 // Calibrate temp sense (0), F
+#define ONE_DAY_MILLIS   86400000           // Number of milliseconds in one day (24*60*60*1000)
+
 #include "mySubs.h"
-//
-// Dependent includes.   Easier to debug code if remove unused include files
-#include "SparkIntervalTimer.h"
-#ifndef NO_BLYNK
-  #include "blynk.h"
-  #include "BlynkHandlers.h"
-#endif
+#include "myFilters.h"
 #include "myAuth.h"
 /* This file myAuth.h is not in Git repository because it contains personal information.
 Make it yourself.   It should look like this, with your personal authorizations:
@@ -69,63 +64,70 @@ Make it yourself.   It should look like this, with your personal authorizations:
   const   String      blynkAuth     = "d2140898f7b94373a78XXX158a3403a1"; // Bare photon
 #endif
 */
-#include "myFilters.h"
-
-
+// Dependent includes.   Easier to debug code if remove unused include files
+#include "SparkIntervalTimer.h"
+#ifndef NO_BLYNK
+  #include "blynk.h"
+  #include "BlynkHandlers.h"
+#endif
 
 using namespace std;
 
-// Global variables
+// Global local variables
 enum                Mode {POT, WEB, SCHD};  // To keep track of mode
 bool                call            = false;// Heat demand to relay control
 double              callCount;              // Floating point of bool call for calculation
 Mode                controlMode     = POT;  // Present control mode
-static double       controlTime     = 0.0;  // Decimal time, hour
-static  uint8_t     displayCount    = 0;    // Display frame number to execute
+double              controlTime     = 0.0;  // Decimal time, hour
+uint8_t             displayCount    = 0;    // Display frame number to execute
+const   int         EEPROM_ADDR     = 1;  // Flash address
+bool                held            = false;// Web toggled permanent and acknowledged
 String              hmString        = "00:00"; // time, hh:mm
+bool                hourChErr       = false;// Flag error in input, T/F
 HouseHeat*          house;                  // House model
 HouseHeat*          houseEmbMod;            // House embedded model
 int                 hum             = 0;    // Relative humidity integer value, %
 int                 I2C_Status      = 0;    // Bus status
 bool                lastHold        = false;// Web toggled permanent and acknowledged
 unsigned long       lastSync     = millis();// Sync time occassionally.   Recommended by Particle.
-const   int         LED             = D7;   // Status LED
+#ifndef BARE_PHOTON
+  Adafruit_8x8matrix   matrix1;             // Tens LED matrix
+  Adafruit_8x8matrix   matrix2;             // Ones LED matrix
+#endif
 IntervalTimer       myTimerD;               // To dim display
 int                 numTimeouts     = 0;    // Number of Particle.connect() needed to unfreeze
 double              OAT             = 30;   // Outside air temperature, F
 int                 potDmd          = 0;    // Pot value, deg F
 int                 potValue        = 62;   // Dial raw value, F
 char                publishString[40];      // For uptime recording
+RateLagExp*         rateFilter;             // Exponential rate lag filter
 bool                reco;                   // Indicator of recovering on cold days by shifting schedule
 double              rejectHeat      = 0.0;  // Adjustment to embedded  model to match sensor, F/sec
 int                 schdDmd         = 62;   // Sched raw value, F
+int                 set             = 62;   // Selected sched, F
 #ifndef NO_PARTICLE
   String            statStr("WAIT...");     // Status string
 #endif
-const  double       tau           = 40.0;   // Rate filter time constant, sec, ~1/5 observed home time constant
-double              Ta_Sense      = 65.0;   // Sensed temp, F
+const  double       tau             = 40.0; // Rate filter time constant, sec, ~1/5 observed home time constant
+double              Ta_Sense        = 65.0; // Sensed temp, F
 double              tempComp;               // Sensed compensated temp, F
 double              updateTime      = 0.0;  // Control law update time, sec
+bool                webHold         = false;// Web permanence request
+int                 webDmd          = 62;   // Web sched, F
+
 
 // Externals
-#ifndef BARE_PHOTON
-  Adafruit_8x8matrix   matrix1;             // Tens LED matrix
-  Adafruit_8x8matrix   matrix2;             // Ones LED matrix
-#endif
-extern  bool        held            = false;// Web toggled permanent and acknowledged
-extern  int         verbose         = 4;    // Debug, as much as you can tolerate
-extern  int         set             = 62;   // Selected sched, F
 extern  double      Ta_Obs          = 62;   // Modeled air temp, F
 extern  double      tempf           = 30.0;
+extern  int         verbose         = 4;    // Debug, as much as you can tolerate
 #ifndef NO_WEATHER_HOOK
-  extern long       updateweatherhour= 0;   // Last hour weather updated
   extern bool       weatherGood   = false;  // webhook OAT lookup successful, T/F
 #endif
-extern  int         webDmd          = 62;   // Web sched, F
-extern bool         webHold         = false;// Web permanence request
+
 
 // Schedules
 // Time to trigger setting change
+// There must be NCH columns
 extern float hourCh[7][NCH] = {
     6, 8, 16, 22,   // Sun
     4, 7, 16, 22,   // Mon
@@ -137,6 +139,7 @@ extern float hourCh[7][NCH] = {
 };
 // Temp setting after change in above table.   Change holds until next
 // time trigger.  Temporarily over-ridden either by pot or web adjustments.
+// There must be NCH columns
 extern const float tempCh[7][NCH] = {
     68, 62, 68, 62, // Sun
     68, 62, 68, 62, // Mon
@@ -146,13 +149,6 @@ extern const float tempCh[7][NCH] = {
     68, 62, 68, 62, // Fri
     68, 62, 68, 62  // Sat
 };
-
-bool hourChErr = false;
-// Rate filter.
-// Exponential chosen for this because it does not suffer from aliasing problems
-// so users not used to tuning digital filters may set tau and T at will.
-// There are some general guidelines for setting those in their comments in this file.
-RateLagExp*  rateFilter;
 
 
 
@@ -253,7 +249,7 @@ int setSaveDisplayTemp(int t)
         case WEB:   break;
         case SCHD:  break;
     }
-    saveTemperature();
+    saveTemperature(set, webDmd, held, EEPROM_ADDR);
     return set;
 }
 
@@ -313,9 +309,9 @@ void setup()
 //    SYSTEM_MODE(SEMI_AUTOMATIC);// this line causes SOS + hard fault (don't understand why)
   Serial.begin(9600);
   delay(2000); // Allow board to settle
-  pinMode(LED, OUTPUT);               // sets pin as output
+  pinMode(LED_PIN, OUTPUT);               // sets pin as output
   #ifndef NO_PARTICLE
-    statStr.reserve(120);
+    statStr.reserve(STAT_RESERVE);
     Particle.variable("stat", statStr);
   #endif
   pinMode(HEAT_PIN,   OUTPUT);
@@ -323,8 +319,8 @@ void setup()
   #ifndef BARE_PHOTON
     Wire.setSpeed(CLOCK_SPEED_100KHZ);
     Wire.begin();
-    matrix1.begin(0x70);
-    matrix2.begin(0x71);
+    matrix1.begin(MATRIX1_ADDR);
+    matrix2.begin(MATRIX2_ADDR);
     setupMatrix(matrix1);
     setupMatrix(matrix2);
     setSaveDisplayTemp(0);            // Assure user reset happened
@@ -332,7 +328,7 @@ void setup()
   #else
     delay(10);
   #endif
-  loadTemperature();
+  loadTemperature(&set, &webHold, &webDmd, EEPROM_ADDR);
   myTimerD.begin(onTimerDim, DIM_DELAY, hmSec);
 
   // Time schedule convert and check
@@ -356,7 +352,7 @@ void setup()
   #endif
 
   // Models
-  house       = new HouseHeat("house",    1.61/86400, 114./86400, 1.75/86400, 283./86400, 29, 69, 180, 120, 0.001);
+  house       = new HouseHeat("house",    1.61/86400, 114./86400, 1.75/86400, 283./86400, 29, 69, 180, 120, 0.01);
   houseEmbMod = new HouseHeat("embHouse", 1.61/86400, 114./86400, 1.75/86400, 283./86400, 29, 69, 180, 120);
 
   // Rate filter
@@ -506,16 +502,16 @@ void loop()
           Wire.write(byte(0));
           uint8_t b   = Wire.read();
           I2C_Status  = b >> 6;
-          //
+
+          // Honeywell conversion
           int rawHum  = (b << 8) & 0x3f00;
           rawHum      |=Wire.read();
           hum         = roundf(rawHum / 163.83);
-          //
           int rawTemp = (Wire.read() << 6) & 0x3fc0;
           rawTemp     |=Wire.read() >> 2;
           Ta_Sense        = (float(rawTemp)*165.0/16383.0 - 40.0)*1.8 + 32.0 + TEMPCAL; // convert to fahrenheit and calibrate
         #else
-          delay(41); // Usual U2C_time
+          delay(41); // Usual I2C time
           if ( RESET>0 ) Ta_Sense = NOMSET;
           house->update(RESET, READ_DELAY/1000, Ta_Sense, double(call), 0.0, OAT);
           Ta_Sense    = house->Ta_Sense();
@@ -619,7 +615,7 @@ void loop()
     {
         lastHold    = webHold;
         held        = webHold;
-        saveTemperature();
+        saveTemperature(set, webDmd, held, EEPROM_ADDR);
     }
 
 
@@ -670,7 +666,6 @@ void loop()
       if (verbose>4) Serial.printf("Control\n");
       char  tempStr[8];                           // time, hh:mm
       controlTime = decimalTime(&currentTime, tempStr);
-      //updateTime  = float(controlTime-lastHour)*3600.0 + float(numTimeouts)/100.0;
       lastHour    = controlTime;
       hmString    = String(tempStr);
       bool callRaw;
@@ -687,15 +682,15 @@ void loop()
       callCount   =  max(min(callCount,                   1.0),  0.0);
       call        =  callCount >= 1.0;
       digitalWrite(HEAT_PIN, call);
-      digitalWrite(LED, call);
+      digitalWrite(LED_PIN,  call);
     }
 
 
     // Publish
     if ( publish1 || publish2 || publish3 || publish4 )
     {
-      char  tmpsStr[150];
-      sprintf(tmpsStr, "|%s|CALL %d|SET %d|TEMP %7.3f|TEMPC %7.3f|HUM %d|HELD %d|T %5.2f|POT %d|WEB %d|SCH %d|OAT %4.1f|TMOD %7.3f|REJH %6.3f|\0", \
+      char  tmpsStr[STAT_RESERVE];
+      sprintf(tmpsStr, "|%s|CALL %d|SET %4.1f|TEMP %7.3f|TEMPC %7.3f|HUM %d|HELD %d|T %5.2f|POT %d|WEB %d|SCH %d|OAT %4.1f|TMOD %7.3f|REJH %6.3f|\0", \
       hmString.c_str(), call, callCount*1+set-HYST, Ta_Sense, tempComp, hum, held, updateTime, potDmd, lastChangedWebDmd, schdDmd, OAT, Ta_Obs, rejectHeat*200);
       #ifndef NO_PARTICLE
         statStr = String(tmpsStr);
@@ -715,37 +710,36 @@ void loop()
             {
               if (verbose>4) Serial.printf("Blynk write1\n");
               Blynk.virtualWrite(V0,  call);
-              Blynk.virtualWrite(V1,  set);
               Blynk.virtualWrite(V2,  Ta_Sense);
               Blynk.virtualWrite(V3,  hum);
               Blynk.virtualWrite(V4,  tempComp);
+              Blynk.virtualWrite(V5,  held);
             }
             if (publish2)
             {
               if (verbose>4) Serial.printf("Blynk write2\n");
-              Blynk.virtualWrite(V5,  held);
               Blynk.virtualWrite(V7,  controlTime);
               Blynk.virtualWrite(V8,  updateTime);
               Blynk.virtualWrite(V9,  potDmd);
-              Blynk.virtualWrite(V20, rejectHeat*200);
+              Blynk.virtualWrite(V10, lastChangedWebDmd);
+              Blynk.virtualWrite(V11, set);
             }
             if (publish3)
             {
               if (verbose>4) Serial.printf("Blynk write3\n");
-              Blynk.virtualWrite(V10, lastChangedWebDmd);
-              Blynk.virtualWrite(V11, set);
               Blynk.virtualWrite(V12, schdDmd);
               Blynk.virtualWrite(V13, Ta_Sense);
+              Blynk.virtualWrite(V14, I2C_Status);
+              Blynk.virtualWrite(V15, hmString);
+              Blynk.virtualWrite(V16, callCount*1+set-HYST);
             }
             if (publish4)
             {
               if (verbose>4) Serial.printf("Blynk write4\n");
-              Blynk.virtualWrite(V14, I2C_Status);
-              Blynk.virtualWrite(V15, hmString);
-              Blynk.virtualWrite(V16, callCount*1+set-HYST);
               Blynk.virtualWrite(V17, reco);
               Blynk.virtualWrite(V18, OAT);
               Blynk.virtualWrite(V19, Ta_Obs);
+              Blynk.virtualWrite(V20, rejectHeat*200);
             }
           #endif
         }

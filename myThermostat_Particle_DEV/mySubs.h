@@ -57,11 +57,10 @@ void    getWeather(void);
 void    gotWeatherData(const char *name, const char *data);
 double  houseTrack(const bool RESET, const double duty, const double Ta_Sense,\
    const double Ta_Obs, const double T);
-void    loadTemperature(void);
+void    loadTemperature(int *set, bool *webHold, int *webDmd, const int addr);
 double  lookupTemp(double tim);
-//double  houseTrack(const double temp, const int RESET, const double duty, const double otherHeat, const double OAT, const double T);
 double  recoveryTime(double OAT);
-void    saveTemperature();
+void    saveTemperature(const int set, const int webDmd, const int held, const int addr);
 double  scheduledTemp(double hourDecimal, double recoTime, bool *reco);
 void    setupMatrix(Adafruit_8x8matrix m);
 String  tryExtractString(String str, const char* start, const char* end);

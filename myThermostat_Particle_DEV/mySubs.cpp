@@ -4,31 +4,21 @@
 
 #ifndef NO_WEATHER_HOOK
   int                         badWeatherCall  = 0;  // webhook lookup counter
+  long                        updateweatherhour;    // Last hour weather updated
 #endif
-const   int                   EEPROM_ADDR     = 1;  // Flash address
 
-
-extern  bool                  held;                 // Web toggled permanent and acknowledged
-extern  int                   set;                  // Selected sched, F
+extern  float                 hourCh[7][NCH];
 extern  double                tempf;                // webhook OAT, deg F
 extern  double                Ta_Obs;               // Modeled air temp, F
-extern  int verbose;
+extern const float            tempCh[7][NCH];
+extern  int                   verbose;
 #ifndef NO_WEATHER_HOOK
-#endif
-#ifndef NO_WEATHER_HOOK
-  extern long                 updateweatherhour;    // Last hour weather updated
   extern bool                 weatherGood;          // webhook OAT lookup successful, T/F
 #endif
-extern  int                   webDmd;               // Web sched, F
-extern bool                   webHold;              // Web permanence request
-
-extern float hourCh[7][NCH];
-extern const float tempCh[7][NCH];
 
 // Convert time to decimal for easy lookup
 double decimalTime(unsigned long *currentTime, char* tempStr)
 {
-//    *currentTime = rtc.now();
     Time.zone(GMT);
     *currentTime = Time.now();
     #ifndef FAKETIME
@@ -49,7 +39,6 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
     return (float(dayOfWeek)*24.0 + float(hours) + float(minutes)/60.0 + \
                         float(seconds)/3600.0);  // 0-6 days and 0 is Sunday
 }
-
 
 
 
@@ -112,7 +101,6 @@ void gotWeatherData(const char *name, const char *data)
   //  <weather>Overcast</weather>
   //  <temperature_string>26.0 F (-3.3 C)</temperature_string>
   //  <temp_f>26.0</temp_f>
-
   String str          = String(data);
   String locationStr  = tryExtractString(str, "<location>",     "</location>");
   String weatherStr   = tryExtractString(str, "<weather>",      "</weather>");
@@ -226,21 +214,21 @@ double HouseHeat::update(const bool RESET, const double T, const double temp, co
 // Setup function to Load the saved settings so can resume after power failure
 // or software reflash.  Note:  flash may return nonsense such as for a brand
 // new Photon unit and we'll need some safe (furnace off) default values.
-void loadTemperature()
+void loadTemperature(int *set, bool *webHold, int *webDmd, const int addr)
 {
     if (verbose>0) Serial.println("Loading and displaying temperature from flash");
     uint8_t values[4];
-    EEPROM.get(EEPROM_ADDR, values);
+    EEPROM.get(addr, values);
     //
-    set     = values[0];
-    if ( (set     > MAXSET  ) | (set     < MINSET  ) ) set     = MINSET;
-    displayTemperature(set);
+    *set     = values[0];
+    if ( (*set     > MAXSET  ) | (*set     < MINSET  ) ) *set     = MINSET;
+    displayTemperature(*set);
     //
-    webHold = values[1];
-    if ( (webHold >    1    ) | (webHold <    0    ) ) webHold =  0;
+    *webHold = values[1];
+    if ( (*webHold >    1    ) | (*webHold <    0    ) ) *webHold =  0;
     //
-    webDmd  = (int)values[2];
-    if ( (webDmd  > MAXSET  ) | (webDmd  < MINSET  ) ) webDmd  = MINSET;
+    *webDmd  = (int)values[2];
+    if ( (*webDmd  > MAXSET  ) | (*webDmd  < MINSET  ) ) *webDmd  = MINSET;
     //
     #ifndef BARE_PHOTON
     Ta_Obs  = values[3];
@@ -296,10 +284,10 @@ double recoveryTime(double OAT)
 // failures the thermostat will reset to the condition it was in before
 // the power failure.   Filter initialized to sensed temperature (lose anticipation briefly
 // following recovery from power failure).
-void saveTemperature()
+void saveTemperature(const int set, const int webDmd, const int held, const int addr)
 {
     uint8_t values[4] = { (uint8_t)set, (uint8_t)held, (uint8_t)webDmd, (uint8_t)(roundf(Ta_Obs)) };
-    EEPROM.put(EEPROM_ADDR, values);
+    EEPROM.put(addr, values);
 }
 
 
