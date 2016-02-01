@@ -26,7 +26,7 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
         uint8_t hours     = Time.hour(*currentTime);
         uint8_t minutes   = Time.minute(*currentTime);
         uint8_t seconds   = Time.second(*currentTime);
-        if (verbose>3) Serial.printf("DAY %u HOURS %u\n", dayOfWeek, hours);
+        if (verbose>5) Serial.printf("DAY %u HOURS %u\n", dayOfWeek, hours);
     #else
         // Rapid time passage simulation to test schedule functions
         uint8_t dayOfWeek = (Time.weekday(*currentTime)-1)*7/6;// minutes = days
@@ -154,8 +154,8 @@ double  houseTrack(const bool RESET, const double duty, const double Ta_Sense,\
     // Rejection
     ePI         = Ta_Sense - Ta_Obs;
     intE        = max(min(intE + Kei*ePI*T, 1), -1);
-    Duty_Reject = intE + Kep*ePI;
-    rejectHeat  = max(min(Duty_Reject, 1), -1)*0.005;
+    Duty_Reject = intE + max(min(Kep*ePI,   1), -1);
+    rejectHeat  = Duty_Reject*0.005;    // Numerical scaling factor, considered when choosing Ks
 
     if ( verbose > 3) Serial.printf("Ta_Obs=%f, Ta_Sense=%f, intE=%f, Duty_Reject=%f, duty=%f, rejectHeat=%f\n",\
                       Ta_Obs, Ta_Sense, intE, Duty_Reject, duty, rejectHeat);
