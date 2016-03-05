@@ -42,7 +42,7 @@ SYSTEM_THREAD(ENABLED);                     // Make sure heat system code always
 #define QUERY_DELAY      15000UL            // Web query wait (15000, 100 for stress test), ms
 #define DISPLAY_DELAY    300UL              // LED display scheduling frame time, ms
 #define HEAT_PIN         A1                 // Heat relay output pin on Photon (A1)
-#define HYST             0.5                // Heat control law hysteresis (0.5), F
+#define HYST             0.75               // Heat control law hysteresis (0.75), F
 #define LED_PIN          D7                 // Status LED
 #define MATRIX1_ADDR     0x70               // LED display matrix address
 #define MATRIX2_ADDR     0x71               // LED display matrix address
@@ -393,7 +393,7 @@ void loop()
     bool                    query;              // Query schedule and OAT, T/F
     bool                    read;               // Read, T/F
     bool                    checkPot;            // Display to LED, T/F
-    const  double           Kv           = 600; // Rate gain, F/(F/sec)
+    const  double           Kv           = 400; // Rate gain, F/(F/sec)
     const  double           Kei          = 2e-5;// Correction integral gain, (F/sec)/F
     const  double           Kep          = 4;   // Correction proportional gain, F/F
     const  double           Kf           = 1;   // Observer gain, F/(F/sec)

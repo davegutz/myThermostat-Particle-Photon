@@ -16,7 +16,7 @@
 #define MINSET      50                      // Minimum setpoint allowed (50), F
 #define NOMSET      68                      // Nominal setpoint for modeling etc, F
 #define MAXSET      72                      // Maximum setpoint allowed (72), F
-#define WEATHER_WAIT      900UL             // Time to wait for weather webhook, ms
+#define WEATHER_WAIT     900UL              // Time to wait for weather webhook, ms
 
 
 // Embedded model class
