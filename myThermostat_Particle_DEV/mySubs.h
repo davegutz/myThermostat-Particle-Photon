@@ -6,6 +6,7 @@
 #include "adafruit-led-backpack.h"
 #include "SparkIntervalTimer.h"
 #define NCH         4                       // Number of temp changes in daily sched (4)
+#define USE_DST     1                       // Whether to apply DST or not, 0 or 1
 #define GMT         -5                      // Enter time different to zulu (does not respect DST)
 #define DIM_DELAY   3000UL                  // LED display timeout to dim, ms
 #ifndef BARE_PHOTON

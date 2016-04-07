@@ -21,6 +21,21 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
 {
     Time.zone(GMT);
     *currentTime = Time.now();
+    // Second Sunday Mar and First Sunday Nov; 2:00 am; crude DST handling
+    if ( USE_DST)
+    {
+      uint8_t month     = Time.month(*currentTime);
+      uint8_t day       = Time.day(*currentTime);
+      uint8_t dayOfWeek = Time.weekday(*currentTime)-1;  // 0-6
+      uint8_t hours     = Time.hour(*currentTime);
+      if (  month>2   && month<12 &&
+        !(month==3  && day<15 && day>7 && dayOfWeek==0 && hours>1) &&
+        !(month==11 && day<8           && dayOfWeek==0 && hours>0 ) )
+        {
+          Time.zone(GMT+1);
+          *currentTime = Time.now();
+        }
+    }
     #ifndef FAKETIME
         uint8_t dayOfWeek = Time.weekday(*currentTime)-1;  // 0-6
         uint8_t hours     = Time.hour(*currentTime);
@@ -33,7 +48,6 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
         uint8_t hours     = Time.hour(*currentTime)*24/60; // seconds = hours
         uint8_t minutes   = 0; // forget minutes
         uint8_t seconds   = 0; // forget seconds
-
     #endif
     sprintf(tempStr, "%02u:%02u", hours, minutes);
     return (float(dayOfWeek)*24.0 + float(hours) + float(minutes)/60.0 + \
