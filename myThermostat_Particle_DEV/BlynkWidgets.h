@@ -7,8 +7,8 @@
  * @brief
  */
 
-#include "WidgetLED.h"
-#include "WidgetLCD.h"
-#include "WidgetTerminal.h"
-#include "WidgetBridge.h"
+#include <WidgetLED.h>
+#include <WidgetLCD.h>
+#include <WidgetTerminal.h>
+#include <WidgetBridge.h>
 // Cannot auto-include WidgetSD, as it has library dependency

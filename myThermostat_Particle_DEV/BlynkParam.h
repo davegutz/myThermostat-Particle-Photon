@@ -13,6 +13,8 @@
 
 #include <string.h>
 #include <stdlib.h>
+//#include <Blynk/BlynkConfig.h>
+//#include <Blynk/BlynkDebug.h>
 #include "BlynkConfig.h"
 #include "BlynkDebug.h"
 
@@ -74,7 +76,7 @@ public:
     iterator operator[](int index) const;
     iterator operator[](const char* key) const;
 
-    uint8_t* getBuffer() const { return (uint8_t*)buff; }
+    void*  getBuffer() const { return (void*)buff; }
     size_t getLength() const { return len; }
 
     // Modification
@@ -152,7 +154,11 @@ void BlynkParam::add(const String& str)
 {
     size_t len = str.length()+1;
     char buff[len];
+#if defined(ARDUINO_AVR_DIGISPARK)
+    const_cast<String&>(str).toCharArray(buff, len);
+#else
     str.toCharArray(buff, len);
+#endif
     BlynkParam::add(buff, len);
 }
 
@@ -166,7 +172,7 @@ void BlynkParam::add(String& str)
 }
 #endif
 
-#if defined(__AVR__)
+#if defined(__AVR__) || defined (ARDUINO_ARCH_ARC32)
 
     #include <stdlib.h>
 

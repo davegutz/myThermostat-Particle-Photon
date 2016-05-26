@@ -11,21 +11,27 @@
 #ifndef BlynkConfig_h
 #define BlynkConfig_h
 
+//#include "Blynk/BlynkDetectDevice.h"
+#include "BlynkDetectDevice.h"
+
 /***************************************************
  * Change these settings to match your need
  ***************************************************/
 
-#define BLYNK_DEFAULT_DOMAIN "cloud.blynk.cc"
-#define BLYNK_DEFAULT_PORT   8442
+#define BLYNK_DEFAULT_DOMAIN     "blynk-cloud.com"
+#define BLYNK_DEFAULT_PORT       8442
+#define BLYNK_DEFAULT_PORT_SSL   8441
 
 /***************************************************
  * Professional settings
  ***************************************************/
 // Library version.
-#define BLYNK_VERSION        "0.3.2"
+#define BLYNK_VERSION        "0.3.7"
 
 // Heartbeat period in seconds.
+#ifndef BLYNK_HEARTBEAT
 #define BLYNK_HEARTBEAT      10
+#endif
 
 // Network timeout in milliseconds.
 #ifndef BLYNK_TIMEOUT_MS
@@ -42,6 +48,11 @@
 #define BLYNK_MAX_READBYTES  256
 #endif
 
+// Limit the outgoing command length.
+#ifndef BLYNK_MAX_SENDBYTES
+#define BLYNK_MAX_SENDBYTES  128
+#endif
+
 // Uncomment to disable built-in analog and digital operations.
 //#define BLYNK_NO_BUILTIN
 
@@ -50,6 +61,9 @@
 
 // Uncomment to enable debug prints.
 //#define BLYNK_DEBUG
+
+// Uncomment to force-enable 128 virtual pins
+//#define BLYNK_USE_128_VPINS
 
 // Uncomment to enable experimental functions.
 //#define BLYNK_EXPERIMENTAL

@@ -11,6 +11,11 @@
 #ifndef BlynkApi_h
 #define BlynkApi_h
 
+//#include <Blynk/BlynkConfig.h>
+//#include <Blynk/BlynkDebug.h>
+//#include <Blynk/BlynkParam.h>
+//#include <Blynk/BlynkHandlers.h>
+//#include <Blynk/BlynkProtocolDefs.h>
 #include "BlynkConfig.h"
 #include "BlynkDebug.h"
 #include "BlynkParam.h"
@@ -70,11 +75,47 @@ public:
      */
     template <typename T>
     void virtualWrite(int pin, const T& data) {
-        char mem[64];
+        char mem[BLYNK_MAX_SENDBYTES];
         BlynkParam cmd(mem, 0, sizeof(mem));
         cmd.add("vw");
         cmd.add(pin);
         cmd.add(data);
+        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE, 0, cmd.getBuffer(), cmd.getLength()-1);
+    }
+
+    template <typename T1, typename T2>
+    void virtualWrite(int pin, const T1& data1, const T2& data2) {
+        char mem[BLYNK_MAX_SENDBYTES];
+        BlynkParam cmd(mem, 0, sizeof(mem));
+        cmd.add("vw");
+        cmd.add(pin);
+        cmd.add(data1);
+        cmd.add(data2);
+        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE, 0, cmd.getBuffer(), cmd.getLength()-1);
+    }
+
+    template <typename T1, typename T2, typename T3>
+    void virtualWrite(int pin, const T1& data1, const T2& data2, const T3& data3) {
+        char mem[BLYNK_MAX_SENDBYTES];
+        BlynkParam cmd(mem, 0, sizeof(mem));
+        cmd.add("vw");
+        cmd.add(pin);
+        cmd.add(data1);
+        cmd.add(data2);
+        cmd.add(data3);
+        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE, 0, cmd.getBuffer(), cmd.getLength()-1);
+    }
+
+    template <typename T1, typename T2, typename T3, typename T4>
+    void virtualWrite(int pin, const T1& data1, const T2& data2, const T3& data3, const T4& data4) {
+        char mem[BLYNK_MAX_SENDBYTES];
+        BlynkParam cmd(mem, 0, sizeof(mem));
+        cmd.add("vw");
+        cmd.add(pin);
+        cmd.add(data1);
+        cmd.add(data2);
+        cmd.add(data3);
+        cmd.add(data4);
         static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE, 0, cmd.getBuffer(), cmd.getLength()-1);
     }
 
@@ -85,7 +126,7 @@ public:
      * @param buff Data buffer
      * @param len  Length of data
      */
-    void virtualWrite(int pin, const void* buff, size_t len) {
+    void virtualWriteBinary(int pin, const void* buff, size_t len) {
         char mem[8];
         BlynkParam cmd(mem, 0, sizeof(mem));
         cmd.add("vw");
@@ -100,7 +141,28 @@ public:
      * @param param
      */
     void virtualWrite(int pin, const BlynkParam& param) {
-        virtualWrite(pin, param.getBuffer(), param.getLength());
+        virtualWriteBinary(pin, param.getBuffer(), param.getLength());
+    }
+
+    /**
+     * Requests Server to re-send current values for all widgets.
+     */
+    void syncAll() {
+        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE_SYNC);
+    }
+
+    /**
+     * Requests App or Server to re-send current value of a Virtual Pin.
+     * This will probably cause user-defined BLYNK_WRITE handler to be called.
+     *
+     * @param pin Virtual Pin number
+     */
+    void syncVirtual(int pin) {
+        char mem[8];
+        BlynkParam cmd(mem, 0, sizeof(mem));
+        cmd.add("vr");
+        cmd.add(pin);
+        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE_SYNC, 0, cmd.getBuffer(), cmd.getLength()-1);
     }
 
     /**
@@ -110,7 +172,7 @@ public:
      */
     template<typename T>
     void tweet(const T& msg) {
-        char mem[128];
+        char mem[BLYNK_MAX_SENDBYTES];
         BlynkParam cmd(mem, 0, sizeof(mem));
         cmd.add(msg);
         static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_TWEET, 0, cmd.getBuffer(), cmd.getLength()-1);
@@ -123,10 +185,23 @@ public:
      */
     template<typename T>
     void notify(const T& msg) {
-        char mem[128];
+        char mem[BLYNK_MAX_SENDBYTES];
         BlynkParam cmd(mem, 0, sizeof(mem));
         cmd.add(msg);
         static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_NOTIFY, 0, cmd.getBuffer(), cmd.getLength()-1);
+    }
+
+    /**
+     * Sends an SMS
+     *
+     * @param msg Text of the message
+     */
+    template<typename T>
+    void sms(const T& msg) {
+        char mem[BLYNK_MAX_SENDBYTES];
+        BlynkParam cmd(mem, 0, sizeof(mem));
+        cmd.add(msg);
+        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_SMS, 0, cmd.getBuffer(), cmd.getLength()-1);
     }
 
     /**
@@ -138,9 +213,24 @@ public:
      */
     template <typename T1, typename T2>
     void email(const char* email, const T1& subject, const T2& msg) {
-        char mem[128];
+        char mem[BLYNK_MAX_SENDBYTES];
         BlynkParam cmd(mem, 0, sizeof(mem));
         cmd.add(email);
+        cmd.add(subject);
+        cmd.add(msg);
+        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_EMAIL, 0, cmd.getBuffer(), cmd.getLength()-1);
+    }
+
+    /**
+     * Sends an email message
+     *
+     * @param subject Subject of message
+     * @param msg     Text of the message
+     */
+    template <typename T1, typename T2>
+    void email(const T1& subject, const T2& msg) {
+        char mem[BLYNK_MAX_SENDBYTES];
+        BlynkParam cmd(mem, 0, sizeof(mem));
         cmd.add(subject);
         cmd.add(msg);
         static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_EMAIL, 0, cmd.getBuffer(), cmd.getLength()-1);
@@ -163,58 +253,6 @@ public:
             BlynkReq req = { 0, BLYNK_SUCCESS, (uint8_t)pin };
             handler(req);
         }
-    }
-
-    /**
-     * Requests App or Server to re-send a value of a Virtual Pin.
-     * This will probably cause user-define BLYNK_WRITE handler to be called.
-     *
-     * @experimental
-     *
-     * @param pin Virtual Pin number
-     */
-    void virtualRead(int pin) {
-        char mem[8];
-        BlynkParam cmd(mem, 0, sizeof(mem));
-        cmd.add("vr");
-        cmd.add(pin);
-        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE, 0, cmd.getBuffer(), cmd.getLength()-1);
-    }
-
-    /**
-     * digitalWrite + update widget state
-     *
-     * @experimental
-     *
-     * @param pin Digital pin number
-     * @param val Value to set
-     */
-    void digitalWrite(uint8_t pin, uint8_t val) {
-        ::digitalWrite(pin, val);
-        char mem[8];
-        BlynkParam cmd(mem, 0, sizeof(mem));
-        cmd.add("dw");
-        cmd.add(pin);
-        cmd.add(val);
-        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE, 0, cmd.getBuffer(), cmd.getLength()-1);
-    }
-
-    /**
-     * analogWrite + update widget state
-     *
-     * @experimental
-     *
-     * @param pin PWM pin number
-     * @param val Value to set
-     */
-    void analogWrite(uint8_t pin, int val) {
-        ::analogWrite(pin, val);
-        char mem[12];
-        BlynkParam cmd(mem, 0, sizeof(mem));
-        cmd.add("aw");
-        cmd.add(pin);
-        cmd.add(val);
-        static_cast<Proto*>(this)->sendCmd(BLYNK_CMD_HARDWARE, 0, cmd.getBuffer(), cmd.getLength()-1);
     }
 
     /**
@@ -243,7 +281,9 @@ public:
 
 protected:
     void Init();
+    static millis_time_t getMillis();
     void processCmd(const void* buff, size_t len);
+    void sendInfo();
 
 };
 
