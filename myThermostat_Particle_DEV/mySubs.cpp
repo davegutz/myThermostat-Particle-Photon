@@ -26,11 +26,11 @@ double decimalTime(unsigned long *currentTime, char* tempStr)
     {
       uint8_t month     = Time.month(*currentTime);
       uint8_t day       = Time.day(*currentTime);
-      uint8_t dayOfWeek = Time.weekday(*currentTime)-1;  // 0-6
+      uint8_t dayOfWeek = Time.weekday(*currentTime);     // 1-7
       uint8_t hours     = Time.hour(*currentTime);
       if (  month>2   && month<12 &&
-        !(month==3  && day<15 && day>7 && dayOfWeek==0 && hours>1) &&
-        !(month==11 && day<8           && dayOfWeek==0 && hours>0 ) )
+        !(month==3  && ((day-dayOfWeek)<7 ) && hours>1) &&  // <second Sunday Mar
+        !(month==11 && ((day-dayOfWeek)>=0) && hours>0) )  // >=first Sunday Nov
         {
           Time.zone(GMT+1);
           *currentTime = Time.now();
